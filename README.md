@@ -1,1 +1,1 @@
-### Can tabular data be a photo-realistic image?: A generative tabular data classification system
+### Table2Image: Interpretable Tabular data Classification with Realistic Image Transformations
