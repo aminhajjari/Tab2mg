@@ -1,1 +1,1 @@
-### Table2Image: Interpretable Tabular data Classification with Realistic Image Transformations
+### Table2Image: Enhancing Tabular Data Classification with Image Transformations
