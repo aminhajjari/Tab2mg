@@ -1,1 +1,1 @@
-### Table2Image: Enhancing Tabular Data Classification with Image Transformations
+### Table2Image: A Lightweight Framework for Enhanced Tabular Data Classification with Image Transformation
