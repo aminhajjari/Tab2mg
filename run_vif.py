@@ -1,20 +1,3 @@
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: light
-#       format_version: '1.5'
-#       jupytext_version: 1.16.1
-#   kernelspec:
-#     display_name: PyTorch 2.2 (NGC 23.11/Python 3.10) on Backend.AI
-#     language: python
-#     name: python3
-# ---
-
-
-
-# +
 import random
 import numpy as np
 import pandas as pd
@@ -32,41 +15,29 @@ import itertools
 import argparse
 import os
 
-# from rtdl_num_embeddings import (
-#     compute_bins,
-#     PeriodicEmbeddings,
-#     PiecewiseLinearEncoding,
-#     PiecewiseLinearEmbeddings
-# )
-# from rtdl_revisiting_models import MLP
-
-# # Argument parser
-# parser = argparse.ArgumentParser(description="Welcome to INTERPRETABLE TAB2IMG")
-# parser.add_argument('--csv', type=str, required=True, help='Path to the dataset (csv)')
-# args = parser.parse_args()
+# Argument parser
+parser = argparse.ArgumentParser(description="Welcome to Table2Image")
+parser.add_argument('--csv', type=str, required=True, help='Path to the dataset (csv)')
+parser.add_argument('--save_dir', type=str, required=True, help='Path to save the final model')
+args = parser.parse_args()
 
 # Parameters
 EPOCH = 50
 BATCH_SIZE = 64
 
-csv_path = '/home/work/DLmath/seungeun/tab/suite/cc18_num/5/eucalyptus_188.csv'
-file_name = 'a'
-
-# csv_path = args.csv
-# file_name = os.path.basename(csv_path).replace('.csv', '')
+csv_path = args.csv
+file_name = os.path.basename(csv_path).replace('.csv', '')
+saving_path = args.save_dir + '.pt'
 
 # Load and preprocess the tabular data
 df = pd.read_csv(csv_path)
-# 목표 column 결정
 target_col_candidates = ['target', 'class', 'outcome', 'Class', 'binaryClass', 'status', 'Target', 'TR', 'speaker', 'Home/Away', 'Outcome', 'Leaving_Certificate', 'technology', 'signal', 'label', 'Label', 'click', 'percent_pell_grant', 'Survival']
 target_col = next((col for col in df.columns if col.lower() in target_col_candidates), None)
 
-# CSV 데이터 로드 및 전처리
 if target_col == None:
     X = df.iloc[:, :-1].values
     y = df.iloc[:, -1].values
 else:
-    # CSV 데이터 로드 및 전처리
     y = df.loc[:, target_col].values
     X = df.drop(target_col, axis=1).values
 
@@ -79,13 +50,12 @@ y = np.array(y)
 
 n_cont_features = X.shape[1]
 tab_latent_size = n_cont_features + 4
-saving_path = '/home/work/DLmath/seungeun/tab/tab_model/' + file_name + '_default.pt'
 USE_CUDA = torch.cuda.is_available()
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Load FashionMNIST
 fashionmnist_dataset = datasets.FashionMNIST(
-    root='/home/work/DLmath/seungeun/tab/fashionmnist',
+    root='.',
     train=True,
     download=True,
     transform=transforms.ToTensor()
@@ -93,13 +63,13 @@ fashionmnist_dataset = datasets.FashionMNIST(
 
 # Load MNIST
 mnist_dataset = datasets.MNIST(
-    root='/home/work/DLmath/seungeun/tab/mnist',
+    root='.',
     train=True,
     download=True,
     transform=transforms.ToTensor()
 )
 
-# 라벨에 10을 더하는 커스텀 데이터셋 정의
+# Target + 10 (MNIST)
 class ModifiedLabelDataset(Dataset):
     def __init__(self, dataset, label_offset=10):
         self.dataset = dataset
@@ -112,7 +82,6 @@ class ModifiedLabelDataset(Dataset):
         image, label = self.dataset[idx]
         return image, label + self.label_offset
 
-# 커스텀 데이터셋 생성
 modified_mnist_dataset = ModifiedLabelDataset(mnist_dataset, label_offset=10)
 
 # # Combine labels for FashionMNIST (0~9) and MNIST (10~19)
@@ -164,7 +133,7 @@ filtered_mnist = Subset(modified_mnist_dataset,
 # Combine FashionMNIST and MNIST
 combined_dataset = ConcatDataset([filtered_fashion, filtered_mnist])
 
-# 확인용 디버깅 코드
+# Integrity check
 indices_by_label = {label: [] for label in range(int(len(unique_values)))}
 
 for i, (_, label) in enumerate(combined_dataset):
@@ -232,8 +201,6 @@ test_synchronized_dataset = SynchronizedDataset(test_filtered_tab_set, test_filt
 train_synchronized_loader = DataLoader(dataset=train_synchronized_dataset, batch_size=BATCH_SIZE, shuffle=True)
 test_synchronized_loader = DataLoader(dataset=test_synchronized_dataset, batch_size=BATCH_SIZE)
 
-# -
-
 class SimpleCNN(nn.Module):
     def __init__(self, num_classes=2):
         super(SimpleCNN, self).__init__()
@@ -256,7 +223,7 @@ class SimpleCNN(nn.Module):
         return x
 
 
-# +
+
 d_embedding = 24
 # m_cont_embeddings = PeriodicEmbeddings(n_cont_features, lite=False)
 
@@ -325,12 +292,12 @@ model_with_embeddings = SimpleMLP(tab_latent_size)
 #     MLP(d_in=n_cont_features * d_embedding, **mlp_config)
 # )
 
-# +
+
 class SimpleMLP(nn.Module):
-    def __init__(self, tab_latent_size = 12):
+    def __init__(self, tab_latent_size = tab_latent_size):
         super(SimpleMLP, self).__init__()
         self.fc1 = nn.Linear(n_cont_features, tab_latent_size)  # Input layer to hidden layer (12 neurons)
-        self.fc2 = nn.Linear(tab_latent_size, 1)  # Hidden layer to output layer
+        self.fc2 = nn.Linear(tab_latent_size, int(len(unique_values)))  # Hidden layer to output layer
         self.relu = nn.ReLU()        # ReLU activation function
 
     def forward(self, x):
@@ -339,16 +306,15 @@ class SimpleMLP(nn.Module):
         return tab_latent, torch.sigmoid(x)  # Sigmoid activation for binary classification
 
 model_with_embeddings = SimpleMLP(tab_latent_size)
-model_with_embeddings2 = SimpleMLP(tab_latent_size)
 
-# +
+
 import torch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
-# VIF 계산 함수
+# VIF Embedding
 def calculate_vif(df):
     df = pd.DataFrame(df)
     vif_data = pd.DataFrame()
@@ -356,93 +322,86 @@ def calculate_vif(df):
     vif_data["VIF"] = [variance_inflation_factor(df.values, i) for i in range(df.shape[1])]
     return vif_data
 
-# Attention + VIF 기반 임베딩 모델
-class GlobalLocalEmbedding(nn.Module):
+class VIFInitialization(nn.Module):
     def __init__(self, input_dim, vif_values):
-        super(GlobalLocalEmbedding, self).__init__()
+        super(VIFInitialization, self).__init__()
         
-        # VIF 기반 가중치
-#         self.vif_weights = (torch.Tensor(vif_values) / sum(vif_values)).to(DEVICE)
-        # VIF 기반 가중치 (학습 가능한 파라미터로 변경)
-        self.vif_weights = nn.Parameter(1/ (torch.Tensor(vif_values) / sum(vif_values)))
+        # VIF-based init
+        self.input_dim = input_dim
+        self.vif_values = vif_values
+        self.relu = nn.ReLU()
+        self.fc1 = nn.Linear(input_dim, input_dim + 4)
+        self.fc2 = nn.Linear(input_dim + 4, input_dim)
         
-        # Attention layer
-        self.attention = nn.Sequential(
-            nn.Linear(input_dim, input_dim),
-            nn.Tanh(),
-            nn.Linear(input_dim, 1),
-            nn.Softmax(dim=1)
-        )
-        
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        # fc1 weight init
+        with torch.no_grad():
+            vif_tensor = torch.tensor(self.vif_values, dtype=torch.float32)
+            inv_vif = 1 / vif_tensor  # reciprocal of vif values
+            for i in range(self.input_dim):
+                self.fc1.weight.data[i, :] = inv_vif[i] / (self.input_dim + 4)
+            
+            # fc2 weight init (default xavier init)
+            nn.init.xavier_uniform_(self.fc2.weight)
+
     def forward(self, x):
-        # Global embedding: VIF 기반 가중치 적용
-        global_embedding = x * self.vif_weights
-        
-        # Local embedding: Attention 가중치 적용
-        attention_weights = self.attention(x)
-        local_embedding = x * attention_weights
-        
-        # Global과 Local 임베딩 결합
-        combined_embedding = global_embedding + local_embedding
-        return combined_embedding
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        return x
 
-
-# -
 
 class CVAEWithTabEmbedding(nn.Module):
     def __init__(self, tab_latent_size=8, latent_size=8):
         super(CVAEWithTabEmbedding, self).__init__()
         
         self.mlp = model_with_embeddings
-        self.mlp2 = model_with_embeddings2
         
         self.encoder = nn.Sequential(
-            nn.Linear(28*28 + 2*(tab_latent_size + 1), 128),
+            nn.Linear(28*28 + tab_latent_size + n_cont_features, 128),
 #             nn.Linear(tab_latent_size, 128),
             nn.ReLU(),
             nn.Linear(128, latent_size)
         )
         
         self.decoder = nn.Sequential(
-            nn.Linear(latent_size + 2*(tab_latent_size + 1), 128),
+            nn.Linear(latent_size + tab_latent_size + n_cont_features, 128),
             nn.ReLU(),
             nn.Linear(128, 28*28),
             nn.Sigmoid()
         )
         
-        # self.tab_classifier = nn.Linear(tab_latent_size, 1)
-        self.final_classifier = SimpleCNN(num_classes=num_classes)  # Custom ResNet-based classifier for images
+#         self.tab_classifier = nn.Linear(tab_latent_size, int(len(unique_values)))
+        self.final_classifier = SimpleCNN(num_classes=int(len(unique_values)))  # Custom ResNet-based classifier for images
 
-    def encode(self, x, tab_embedding, tab_pred, vif_mlp_embedding, vif_mlp_pred):
-        return self.encoder(torch.cat([x, tab_embedding, tab_pred, vif_mlp_embedding, vif_mlp_pred], dim=1))
+    def encode(self, x, tab_embedding, vif_embedding):
+        return self.encoder(torch.cat([x, tab_embedding, vif_embedding], dim=1))
 #         return self.encoder(tab_embedding)
     
-    def decode(self, z, tab_embedding, tab_pred, vif_mlp_embedding, vif_mlp_pred):
-        return self.decoder(torch.cat([z, tab_embedding, tab_pred, vif_mlp_embedding, vif_mlp_pred], dim=1))
+    def decode(self, z, tab_embedding, vif_embedding):
+        return self.decoder(torch.cat([z, tab_embedding, vif_embedding], dim=1))
     
     def forward(self, x, tab_data):
         vif_df = calculate_vif(tab_data.detach().cpu().numpy())
         vif_values = vif_df['VIF'].values
         input_dim = tab_data.shape[1]
-        vif_model = GlobalLocalEmbedding(input_dim, vif_values).to(DEVICE)
+        vif_model = VIFInitialization(input_dim, vif_values).to(DEVICE)
         vif_embedding = vif_model(tab_data)
         
         tab_embedding, tab_pred = self.mlp(tab_data)
-        vif_mlp_embedding, vif_mlp_pred = self.mlp2(vif_embedding)
-        z = self.encode(x, tab_embedding, tab_pred, vif_mlp_embedding, vif_mlp_pred)
-        recon_x = self.decode(z, tab_embedding, tab_pred, vif_mlp_embedding, vif_mlp_pred)
+        z = self.encode(x, tab_embedding, vif_embedding)
+        recon_x = self.decode(z, tab_embedding, vif_embedding)
 #         tab_pred = tab_embedding
 #         tab_pred = self.tab_classifier(tab_embedding)
         img_pred = self.final_classifier(recon_x.view(-1, 1, 28, 28))  # Reshape recon_x for CNN input
         return recon_x, tab_pred, img_pred
 
 
-# +
 cvae = CVAEWithTabEmbedding(tab_latent_size).to(DEVICE)
 optimizer = optim.AdamW(cvae.parameters(), lr=0.001)
 # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)  # Decay LR by a factor of 0.1 every 10 epochs
 
-import torch.nn.functional as F
 
 def loss_function(recon_x, x, tab_pred, tab_labels, img_pred, img_labels):
     BCE = F.mse_loss(recon_x, x)  # Reconstruction loss
@@ -450,7 +409,7 @@ def loss_function(recon_x, x, tab_pred, tab_labels, img_pred, img_labels):
     img_loss = F.cross_entropy(img_pred, img_labels)
     return BCE + tab_loss + img_loss
 
-# +
+
 def train(model, train_data_loader, optimizer, epoch):
     model.train()
     train_loss = 0
@@ -595,11 +554,6 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
 
     return best_accuracy, best_auc, best_epoch
 
-# -
-
-
-
-# +
 best_accuracy = 0
 best_auc = 0
 best_epoch = 0
@@ -609,7 +563,6 @@ for epoch in range(1, EPOCH + 1):
     best_accuracy, best_auc, best_epoch = test(cvae, test_synchronized_loader, epoch, best_accuracy, best_auc, best_epoch, best_model_path=saving_path)
 
 print(f'Best model image classification accuracy: {best_accuracy:.4f} at epoch: {best_epoch}, Best AUC: {best_auc:.4f}')
-# -
 
 
 
