@@ -1,29 +1,3 @@
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: light
-#       format_version: '1.5'
-#       jupytext_version: 1.16.1
-#   kernelspec:
-#     display_name: PyTorch 2.2 (NGC 23.11/Python 3.10) on Backend.AI
-#     language: python
-#     name: python3
-# ---
-
-# #### class 개수 | fashionmnist target
-# 2 | 0 9<br>
-# 3 | 0 8 9 <br>
-# 4 | 0 1 8 9 <br>
-# 5 | 0 1 3 8 9<br>
-# 6 | 0 1 3 5 8 9 <br>
-# 7 | 0 1 3 5 6 8 9 <br>
-# 8 | 0 1 3 5 6 7 8 9 <br>
-# 9 | 0 1 2 3 5 6 7 8 9 <br>
-# 10 | 0 1 2 3 4 5 6 7 8 9
-
-# +
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -33,8 +7,12 @@ from torch.utils.data import DataLoader, Subset, ConcatDataset
 from sklearn.metrics import roc_auc_score, accuracy_score
 import os
 
-## 이거부터 정하고 시작
-num_classes = 2
+# Argument parser
+parser = argparse.ArgumentParser(description="Welcome to DualSHAP")
+parser.add_argument('--num_classes', type=int, required=True, help='# of classes')
+args = parser.parse_args()
+
+num_classes = args.num_classes
 
 class SimpleCNN_seq(nn.Module):
     def __init__(self, num_classes=15):
@@ -78,7 +56,7 @@ from torchvision import datasets, transforms
 
 # Load FashionMNIST
 fashionmnist_dataset = datasets.FashionMNIST(
-    root='/home/work/DLmath/seungeun/tab/fashionmnist',
+    root='.',
     train=True,
     download=True,
     transform=transforms.ToTensor()
@@ -86,7 +64,7 @@ fashionmnist_dataset = datasets.FashionMNIST(
 
 # Load MNIST
 mnist_dataset = datasets.MNIST(
-    root='/home/work/DLmath/seungeun/tab/mnist',
+    root='.',
     train=True,
     download=True,
     transform=transforms.ToTensor()
@@ -203,7 +181,6 @@ print(f"Loading best model with accuracy: {best_acc:.2f}%")
 model = torch.load(save_path)
 acc = evaluate(model, test_loader, device)
 print(acc)
-# -
 
 
 
