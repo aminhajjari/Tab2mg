@@ -1,20 +1,3 @@
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: light
-#       format_version: '1.5'
-#       jupytext_version: 1.16.1
-#   kernelspec:
-#     display_name: PyTorch 2.2 (NGC 23.11/Python 3.10) on Backend.AI
-#     language: python
-#     name: python3
-# ---
-
-
-
-# +
 import random
 import numpy as np
 import pandas as pd
@@ -32,41 +15,29 @@ import itertools
 import argparse
 import os
 
-from rtdl_num_embeddings import (
-    compute_bins,
-    PeriodicEmbeddings,
-    PiecewiseLinearEncoding,
-    PiecewiseLinearEmbeddings
-)
-from rtdl_revisiting_models import MLP
-
-# # Argument parser
-# parser = argparse.ArgumentParser(description="Welcome to INTERPRETABLE TAB2IMG")
-# parser.add_argument('--csv', type=str, required=True, help='Path to the dataset (csv)')
-# args = parser.parse_args()
+# Argument parser
+parser = argparse.ArgumentParser(description="Welcome to INTERPRETABLE TAB2IMG")
+parser.add_argument('--csv', type=str, required=True, help='Path to the dataset (csv)')
+parser.add_argument('--save_dir', type=str, required=True, help='Path to save the final model')
+args = parser.parse_args()
 
 # Parameters
 EPOCH = 50
 BATCH_SIZE = 64
 
-csv_path = '//home/work/DLmath/seungeun/tab/suite/tabzilla/data_num_refined/16/8_liver-disorders.csv'
-file_name = 'a'
-
-# csv_path = args.csv
-# file_name = os.path.basename(csv_path).replace('.csv', '')
+csv_path = args.csv
+file_name = os.path.basename(csv_path).replace('.csv', '')
+saving_path = args.save_dir + '.pt'
 
 # Load and preprocess the tabular data
 df = pd.read_csv(csv_path)
-# 목표 column 결정
 target_col_candidates = ['target', 'class', 'outcome', 'Class', 'binaryClass', 'status', 'Target', 'TR', 'speaker', 'Home/Away', 'Outcome', 'Leaving_Certificate', 'technology', 'signal', 'label', 'Label', 'click', 'percent_pell_grant', 'Survival']
 target_col = next((col for col in df.columns if col.lower() in target_col_candidates), None)
 
-# CSV 데이터 로드 및 전처리
 if target_col == None:
     X = df.iloc[:, :-1].values
     y = df.iloc[:, -1].values
 else:
-    # CSV 데이터 로드 및 전처리
     y = df.loc[:, target_col].values
     X = df.drop(target_col, axis=1).values
 
@@ -78,13 +49,12 @@ y = np.array(y)
 
 n_cont_features = X.shape[1]
 tab_latent_size = n_cont_features + 4
-saving_path = '/home/work/DLmath/seungeun/tab/' + file_name + '_default.pt'
 USE_CUDA = torch.cuda.is_available()
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Load FashionMNIST
 fashionmnist_dataset = datasets.FashionMNIST(
-    root='/home/work/DLmath/seungeun/tab/fashionmnist',
+    root='.',
     train=True,
     download=True,
     transform=transforms.ToTensor()
@@ -92,13 +62,13 @@ fashionmnist_dataset = datasets.FashionMNIST(
 
 # Load MNIST
 mnist_dataset = datasets.MNIST(
-    root='/home/work/DLmath/seungeun/tab/mnist',
+    root='.',
     train=True,
     download=True,
     transform=transforms.ToTensor()
 )
 
-# 라벨에 10을 더하는 커스텀 데이터셋 정의
+# Target + 10 (MNIST)
 class ModifiedLabelDataset(Dataset):
     def __init__(self, dataset, label_offset=10):
         self.dataset = dataset
@@ -111,7 +81,6 @@ class ModifiedLabelDataset(Dataset):
         image, label = self.dataset[idx]
         return image, label + self.label_offset
 
-# 커스텀 데이터셋 생성
 modified_mnist_dataset = ModifiedLabelDataset(mnist_dataset, label_offset=10)
 
 # # Combine labels for FashionMNIST (0~9) and MNIST (10~19)
@@ -131,7 +100,6 @@ modified_mnist_dataset = ModifiedLabelDataset(mnist_dataset, label_offset=10)
 # Normalize tabular features
 scaler = StandardScaler()
 X = scaler.fit_transform(X)
-
 
 
 # Split tabular data into train and test sets
@@ -165,12 +133,12 @@ filtered_mnist = Subset(modified_mnist_dataset,
 # Combine FashionMNIST and MNIST
 combined_dataset = ConcatDataset([filtered_fashion, filtered_mnist])
 
-# 확인용 디버깅 코드
+# Integrity check
 indices_by_label = {label: [] for label in range(int(len(unique_values)))}
 
 for i, (_, label) in enumerate(combined_dataset):
     if label not in indices_by_label:
-        print(f"Unexpected label {label} at index {i}")  # 잘못된 라벨 출력
+        print(f"Unexpected label {label} at index {i}")  # If anything goes wrong...
     indices_by_label[label].append(i)
 
 
@@ -233,16 +201,6 @@ test_synchronized_dataset = SynchronizedDataset(test_filtered_tab_set, test_filt
 train_synchronized_loader = DataLoader(dataset=train_synchronized_dataset, batch_size=BATCH_SIZE, shuffle=True)
 test_synchronized_loader = DataLoader(dataset=test_synchronized_dataset, batch_size=BATCH_SIZE)
 
-# -
-
-y
-
-X
-
-list(X)
-
-X[342]
-
 
 class SimpleCNN(nn.Module):
     def __init__(self, num_classes=2):
@@ -266,9 +224,8 @@ class SimpleCNN(nn.Module):
         return x
 
 
-# +
-d_embedding = 24
-m_cont_embeddings = PeriodicEmbeddings(n_cont_features, lite=False)
+# d_embedding = 24
+# m_cont_embeddings = PeriodicEmbeddings(n_cont_features, lite=False)
 
 # Compute bins
 # Using quantile-based bins
@@ -376,12 +333,11 @@ class CVAEWithTabEmbedding(nn.Module):
         return recon_x, tab_pred, img_pred
 
 
-# +
 cvae = CVAEWithTabEmbedding(tab_latent_size).to(DEVICE)
 optimizer = optim.AdamW(cvae.parameters(), lr=0.001)
 # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)  # Decay LR by a factor of 0.1 every 10 epochs
 
-import torch.nn.functional as F
+
 
 def loss_function(recon_x, x, tab_pred, tab_labels, img_pred, img_labels):
     BCE = F.mse_loss(recon_x, x)  # Reconstruction loss
@@ -531,11 +487,7 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
 
     return best_accuracy, best_auc, best_epoch
 
-# -
 
-
-
-# +
 best_accuracy = 0
 best_auc = 0
 best_epoch = 0
@@ -545,7 +497,7 @@ for epoch in range(1, EPOCH + 1):
     best_accuracy, best_auc, best_epoch = test(cvae, test_synchronized_loader, epoch, best_accuracy, best_auc, best_epoch, best_model_path=saving_path)
 
 print(f'Best model image classification accuracy: {best_accuracy:.4f} at epoch: {best_epoch}, Best AUC: {best_auc:.4f}')
-# -
+
 
 
 
