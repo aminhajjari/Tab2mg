@@ -3,7 +3,7 @@ import glob
 import subprocess
 
 # Argument parser
-parser = argparse.ArgumentParser(description="Welcome to Table2Image")
+parser = argparse.ArgumentParser(description="Welcome to DualSHAP")
 parser.add_argument('--csv_dir', type=str, required=True, help='Path to the csv directory')
 parser.add_argument('--num_classes', type=int, required=True, help='# of classes')
 args = parser.parse_args()
@@ -29,14 +29,14 @@ for csv_file in csv_files:
     os.makedirs(csv_name, exist_ok=True)
 
     # Step 1.
-    print(f"Running diabetes_tab_s.py for {csv_file}...")
+    print(f"Running tab_emb.py for {csv_file}...")
     subprocess.run(
-        ['python', tab_script, '--csv', csv_file, '--csv_name', csv_name],
+        ['python', tab_script, '--csv', csv_file, '--csv_name', csv_name, '--num_classes', num_classes],
         check=True
     )
 
     # Step 2.
-    print(f"Running diabetes_inv_s.py for {csv_file}...")
+    print(f"Running inverse_emb.py for {csv_file}...")
     subprocess.run(
         ['python', inv_script, '--csv', csv_file, '--csv_name', csv_name],
         check=True
