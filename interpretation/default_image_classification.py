@@ -110,7 +110,7 @@ model = SimpleCNN_seq(num_classes=15).to(device)  # Set num_classes to 15 for co
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 best_acc = 0.0  # Variable to store the best accuracy
-save_path = 'fashion_mnist_classification_' + str(num_classes) + '.pt'  # Path to save the best model
+save_path = 'image_classification_' + str(num_classes) + '.pt'  # Path to save the best model
 
 
 # Training function
