@@ -16,7 +16,7 @@ import argparse
 import os
 
 # Argument parser
-parser = argparse.ArgumentParser(description="Welcome to INTERPRETABLE TAB2IMG")
+parser = argparse.ArgumentParser(description="Welcome to Table2Image")
 parser.add_argument('--csv', type=str, required=True, help='Path to the dataset (csv)')
 parser.add_argument('--save_dir', type=str, required=True, help='Path to save the final model')
 args = parser.parse_args()
