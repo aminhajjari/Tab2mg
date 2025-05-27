@@ -14,3 +14,5 @@ python run.py --csv /path/to/data.csv --save_dir /path/to/save/results
 ```
 python run_vif.py --csv /path/to/data.csv --save_dir /path/to/save/results
 ```
+
+##### Please refer to `interpretation` directory for DualSHAP.
