@@ -292,7 +292,7 @@ model_with_embeddings = SimpleMLP(tab_latent_size)
 #     MLP(d_in=n_cont_features * d_embedding, **mlp_config)
 # )
 
-# +
+
 class CVAEWithTabEmbedding(nn.Module):
     def __init__(self, tab_latent_size=8, latent_size=8):
         super(CVAEWithTabEmbedding, self).__init__()
@@ -345,7 +345,7 @@ def loss_function(recon_x, x, tab_pred, tab_labels, img_pred, img_labels):
     img_loss = F.binary_cross_entropy_with_logits(img_pred, img_labels)
     return BCE + tab_loss + img_loss
 
-# +
+
 def train(model, train_data_loader, optimizer, epoch):
     model.train()
     train_loss = 0
