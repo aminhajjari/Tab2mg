@@ -137,12 +137,11 @@ filtered_mnist = Subset(modified_mnist_dataset,
 # Combine FashionMNIST and MNIST
 combined_dataset = ConcatDataset([filtered_fashion, filtered_mnist])
 
-# 확인용 디버깅 코드
 indices_by_label = {label: [] for label in range(int(len(unique_values)))}
 
 for i, (_, label) in enumerate(combined_dataset):
     if label not in indices_by_label:
-        print(f"Unexpected label {label} at index {i}")  # 잘못된 라벨 출력
+        print(f"Unexpected label {label} at index {i}")
     indices_by_label[label].append(i)
 
 
@@ -206,7 +205,6 @@ train_synchronized_loader = DataLoader(dataset=train_synchronized_dataset, batch
 test_synchronized_loader = DataLoader(dataset=test_synchronized_dataset, batch_size=BATCH_SIZE)
 
 
-# -
 
 class SimpleCNN(nn.Module):
     def __init__(self, num_classes=2):
@@ -230,67 +228,6 @@ class SimpleCNN(nn.Module):
         return x
 
 
-########################################안 쓰이는 클래스######################################################
-class SimpleCNN_seq(nn.Module):
-    def __init__(self, num_classes=1):
-        super(SimpleCNN_seq, self).__init__()
-        
-        # Convolutional layers with pooling and ReLU activation
-        self.conv_layers = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2)
-        )
-        
-        # Fully connected layers with dropout and ReLU activation
-        self.fc_layers = nn.Sequential(
-            nn.Linear(64 * 7 * 7, 128),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(128, 1)  # Output changed to 1 for binary classification
-        )
-
-
-    def forward(self, x):
-        x = self.conv_layers(x)  # Pass through conv layers
-        x = x.view(x.size(0), -1)  # Flatten the tensor
-        x = self.fc_layers(x)  # Pass through fully connected layers
-        return x
-
-# +
-d_embedding = 24
-# m_cont_embeddings = PeriodicEmbeddings(n_cont_features, lite=False)
-
-# Compute bins
-# Using quantile-based bins
-# quantile_bins = compute_bins(X_train_tabular_tensor)
-
-# # Using target-aware tree-based bins
-# tree_bins = compute_bins(
-#     X_train_tabular_tensor,
-#     tree_kwargs={'min_samples_leaf': 64, 'min_impurity_decrease': 1e-4},
-#     y=y_train_tabular_tensor,
-#     regression=True,
-# )
-
-# # Define MLP-Q / MLP-T model
-# mlp_config = {
-#     'd_out': tab_latent_size,  # For example, a single regression task.
-#     'n_blocks': 2,
-#     'd_block': 256,
-#     'dropout': 0.1,
-# } # 2 12 0
-
-# model_with_embeddings = nn.Sequential(
-#     m_cont_embeddings,
-#     nn.Flatten(),
-#     MLP(d_in=n_cont_features * d_embedding, **mlp_config)
-# )
-
 
 class SimpleMLP(nn.Module):
     def __init__(self, tab_latent_size = tab_latent_size):
@@ -306,32 +243,7 @@ class SimpleMLP(nn.Module):
 
 model_with_embeddings = SimpleMLP(tab_latent_size)
 
-# mlp_q_model = nn.Sequential(
-#     PiecewiseLinearEncoding(quantile_bins),
-#     nn.Flatten(),
-#     MLP(d_in=sum(len(b) - 1 for b in quantile_bins), **mlp_config)
-# )
 
-# mlp_t_model = nn.Sequential(
-#     PiecewiseLinearEncoding(tree_bins),
-#     nn.Flatten(),
-#     MLP(d_in=sum(len(b) - 1 for b in tree_bins), **mlp_config)
-# )
-
-# # Define MLP-QLR / MLP-TLR model
-# mlp_qlr_model = nn.Sequential(
-#     PiecewiseLinearEmbeddings(quantile_bins, d_embedding, activation=True),
-#     nn.Flatten(),
-#     MLP(d_in=n_cont_features * d_embedding, **mlp_config)
-# )
-
-# mlp_tlr_model = nn.Sequential(
-#     PiecewiseLinearEmbeddings(tree_bins, d_embedding, activation=True),
-#     nn.Flatten(),
-#     MLP(d_in=n_cont_features * d_embedding, **mlp_config)
-# )
-
-# +
 class CVAEWithTabEmbedding(nn.Module):
     def __init__(self, tab_latent_size=8, latent_size=8):
         super(CVAEWithTabEmbedding, self).__init__()
@@ -372,7 +284,6 @@ class CVAEWithTabEmbedding(nn.Module):
         return recon_x, tab_pred, img_pred
 
 
-# +
 cvae = CVAEWithTabEmbedding(tab_latent_size).to(DEVICE)
 optimizer = optim.AdamW(cvae.parameters(), lr=0.001)
 # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)  # Decay LR by a factor of 0.1 every 10 epochs
@@ -386,86 +297,12 @@ def loss_function(recon_x, x, tab_pred, tab_labels, img_pred, img_labels):
     return BCE + tab_loss + img_loss
 
 
-# -
-
-########################################안 쓰이는 클래스(바로 아래 셀이 쓰이는 데 아래 셀이 안 쓰임)######################################################
-class SimpleCNN_INV(nn.Module):
-    def __init__(self, num_classes=1):
-        super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.fc1 = nn.Linear(64 * 7 * 7, 128)
-        self.fc2 = nn.Linear(128, num_classes)
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.5)
-
-    def forward(self, x):
-        x = self.relu(self.conv1(x))
-        x = self.pool(x)
-        x = self.relu(self.conv2(x))
-        x = self.pool(x)
-        x = x.view(x.size(0), -1)  # Flatten the tensor
-        x = self.dropout(self.relu(self.fc1(x)))
-        x = self.fc2(x)
-        return x
-
-
-########################################안 쓰이는 클래스######################################################
-class InverseCVAE(nn.Module):
-    def __init__(self, img_latent_size=12, tab_output_size=8):
-        super(InverseCVAE, self).__init__()
-        
-        self.img_encoder = nn.Sequential(
-            nn.Linear(28*28, 128),
-            nn.ReLU(),
-            nn.Linear(128, img_latent_size)
-        )
-        
-        self.tabular_decoder = nn.Sequential(
-            nn.Linear(img_latent_size + 1, 128),
-            nn.ReLU(),
-            nn.Linear(128, tab_output_size),  # Output tabular data
-        )
-        
-        self.cnn = SimpleCNN_INV(num_classes=num_classes)
-
-    def encode(self, img_data):
-        return self.img_encoder(img_data)
-    
-    def decode(self, z, img_latent):
-        return self.tabular_decoder(torch.cat([z, img_latent], dim=1))
-    
-    def forward(self, img_data):
-        img = img_data.view(-1, 28, 28).unsqueeze(1)
-        img_latent = self.cnn(img)  # Classify the image first
-        z = self.encode(img_data)
-        recon_tabular = self.decode(z, img_latent)  # Decode into tabular data
-        return recon_tabular, img_latent
-
-
-########################################안 쓰이는 클래스######################################################
-class TABMLP(nn.Module):
-    def __init__(self, tab_latent_size=12):
-        super(TABMLP, self).__init__()
-        self.fc1 = nn.Linear(8, tab_latent_size)  # 8 features as input
-        self.fc2 = nn.Linear(tab_latent_size, 1)  # Output layer for binary classification
-        self.relu = nn.ReLU()
-    
-    def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.fc2(x)
-        return torch.sigmoid(x)
-
-
-# +
-# P_I_X_model = torch.load('diabetes.pt').to(DEVICE)
-fmnist_path = 'fashion_mnist_classification_' + str(num_classes) + '.pt'
+fmnist_path = 'image_' + str(num_classes) + '.pt'
 P_I_X_model = torch.load(fmnist_path).to(DEVICE)
 P_X_I_model = torch.load(f'{csv_name}/{csv_name}_inv.pt').to(DEVICE)
 P_F_X_model = torch.load(f'{csv_name}/{csv_name}_tab.pt').to(DEVICE)
 
-# 모델의 모든 파라미터에 대해 requires_grad를 False로 설정하여 freeze
+# freeze
 # for param in P_I_X_model.parameters():
 #     param.requires_grad = False
 
@@ -479,22 +316,14 @@ P_F_X_model = torch.load(f'{csv_name}/{csv_name}_tab.pt').to(DEVICE)
 # def P_I_X_model_rev(x):
 #     return P_I_X_model_rev(x)[1]
 
-# +
-# def img_wrapper(x):
-#     # NumPy -> Tensor 변환
-#     x_tensor = torch.tensor(x, dtype=torch.float32)
-#     x_tensor = x_tensor.view(-1, 1, 28, 28)
-#     x_tensor = x_tensor.to(DEVICE)  # 필요한 경우 GPU로 이동
-#     return P_I_X_model.final_classifier(x_tensor).detach().cpu().numpy()
 
 def tab_wrapper(x):
-    # NumPy -> Tensor 변환
+    # numpy -> tensor
     x_tensor = torch.tensor(x, dtype=torch.float32)
-    x_tensor = x_tensor.to(DEVICE)  # 필요한 경우 GPU로 이동
+    x_tensor = x_tensor.to(DEVICE)  # gpu
     return P_F_X_model(x_tensor).detach().cpu().numpy()
 
 
-# +
 import torch
 import numpy as np
 from sklearn.metrics import roc_auc_score
@@ -698,7 +527,7 @@ P_I_X = P_I_X.view(-1, 28, 28)
 # torch.Size([148, 784]) (148, 19) (148, 1, 28, 28)<br>
 # torch.Size([148, 28, 28]) (148, 19) (148, 1, 28, 28)<br>
 
-# +
+
 class CustomModel(nn.Module):
     def __init__(self, num_classes, size):
         super(CustomModel, self).__init__()
@@ -740,27 +569,6 @@ class CustomModel(nn.Module):
 view_model = CustomModel(num_classes=P_F_X.shape[1], size=P_F_X.shape[0]).to(DEVICE)
 
 
-# +
-# # MMD Loss 구성하기 위한 함수 설정
-
-# # bandwidth가 작을수록 커널 함수가 국소적인 정보에 더 민감해지고, 값이 크면 더 넓은 범위의 데이터를 유사하다고 간주
-# def mmd_loss(x, y, kernel_bandwidth=0.5): # 분모 : , eps=1e-6
-#     def gaussian_kernel(a, b):
-#         dist = ((a.unsqueeze(1) - b.unsqueeze(0)) ** 2).sum(2)
-#         return torch.exp(-dist / (2 * kernel_bandwidth ** 2)) #  + eps
-    
-#     xx_kernel = gaussian_kernel(x, x)
-#     yy_kernel = gaussian_kernel(y, y)
-#     xy_kernel = gaussian_kernel(x, y)
-    
-#     mmd = xx_kernel.mean() + yy_kernel.mean() - 2 * xy_kernel.mean()
-
-#     return mmd
-
-# +
-# MMD Loss 구성하기 위한 함수 설정
-
-# bandwidth가 작을수록 커널 함수가 국소적인 정보에 더 민감해지고, 값이 크면 더 넓은 범위의 데이터를 유사하다고 간주
 def mmd_loss(x, y): # 분모 : , eps=1e-6
     xx, yy, zz = torch.mm(x, x.t()), torch.mm(y, y.t()), torch.mm(x, y.t())
     rx = (xx.diag().unsqueeze(0).expand_as(xx))
@@ -783,7 +591,7 @@ def mmd_loss(x, y): # 분모 : , eps=1e-6
     return torch.mean(XX + YY - 2. * XY)
 
 
-# +
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -807,7 +615,7 @@ class Starting_MLP_I(nn.Module):
             nn.Linear(input_size, 128),
             nn.ReLU(),
             nn.Linear(128, output_size),
-            nn.Softplus()  # 표준편차는 양수로 만들어야 하므로 Softplus 사용
+            nn.Softplus()  # softplus for positive std
         )
     
     def forward(self, x):
@@ -827,7 +635,7 @@ class Starting_MLP_X(nn.Module):
             nn.Linear(input_size, 12),
             nn.ReLU(),
             nn.Linear(12, output_size),
-            nn.Softplus()  # 표준편차는 양수로 만들어야 하므로 Softplus 사용
+            nn.Softplus()  # softplus for positive std
         )
     
     def forward(self, x):
@@ -835,13 +643,6 @@ class Starting_MLP_X(nn.Module):
         std = self.fc_std(x)
         return mean, std
 
-# def save_model(model, optimizer, index, path="models2"): 저장안함
-#     os.makedirs(os.path.join(csv_name, path), exist_ok=True)
-#     torch.save({
-#         'model_state_dict': model.state_dict(),
-#         'optimizer_state_dict': optimizer.state_dict()
-#     }, os.path.join(csv_name, path)+f'/model2_{index}.pt')
-#     #print(f"Model saved to {save_path}")
 
 def infonce_loss(P_I_F_X, P_X_F_I):
     P_I_F_X = P_I_F_X.view(P_I_F_X.size(0), -1)
@@ -857,11 +658,9 @@ def infonce_loss(P_I_F_X, P_X_F_I):
 def bounded_rsample(dist, mean, lower, upper, threshold_ratio=0.9, max_attempts=100):
     for _ in range(max_attempts):
         sample = dist.rsample()
-        # 일정 비율 이상의 요소가 조건 만족
         valid_ratio = torch.sum((sample >= lower) & (sample <= upper)).item() / sample.numel()
         if valid_ratio >= threshold_ratio:
             return sample
-    # 실패 시: 평균값 반환
     return mean
 
 def train(P_I_X, P_X_I, P_F_X, P_F_I, min_epochs=100, lr=0.001):
@@ -921,7 +720,7 @@ def train(P_I_X, P_X_I, P_F_X, P_F_I, min_epochs=100, lr=0.001):
             best_P_F_I_X = P_F_I_X.detach().clone()
             best_P_F_X_I = P_F_X_I.detach().clone()
             
-            # 모델 저장 (덮어쓰기) 저장안함
+            
 #             save_model(mlp_P_I_F_X, optimizer, index)
 #             save_model(mlp_P_X_F_I, optimizer, index)
             
@@ -949,14 +748,14 @@ def train(P_I_X, P_X_I, P_F_X, P_F_I, min_epochs=100, lr=0.001):
 
 P_F_I_X, P_F_X_I, mi_loss_return, reconstruction_loss_return, recon_mmd_loss_return, kl_div_return, sigma_return_1, sigma_return_2 = train(P_I_X, P_X_I, P_F_X, P_F_I, lr=0.00001)
 
-# +
+
 save_path = 'loss_df'
 os.makedirs(os.path.join(csv_name, save_path), exist_ok=True)
 
 
-# 함수 정의
+
 def save_results_to_csv(index, mi_loss, reconstruction_loss, recon_mmd_loss, kl_div, sigma_return_1, sigma_return_2, file_path="results.csv", file_path_sigma1="results.csv", file_path_sigma2="results.csv"):
-    # 저장할 데이터 생성
+    
     data = {
         "index": [index],
         "mi_loss": [mi_loss.detach().cpu().numpy()],
@@ -973,7 +772,7 @@ def save_results_to_csv(index, mi_loss, reconstruction_loss, recon_mmd_loss, kl_
     df_sigma1 = pd.DataFrame(data_sigma1)
     df_sigma2 = pd.DataFrame(data_sigma2)
 
-    # 파일이 이미 존재하면 기존 데이터에 추가, 없으면 새로 생성
+    
     if os.path.exists(file_path):
         df.to_csv(file_path, mode='a', header=False, index=False)  # append mode
     else:
@@ -991,12 +790,7 @@ def save_results_to_csv(index, mi_loss, reconstruction_loss, recon_mmd_loss, kl_
         
         
 save_results_to_csv(index=index, mi_loss=mi_loss_return, reconstruction_loss=reconstruction_loss_return, recon_mmd_loss=recon_mmd_loss_return, kl_div=kl_div_return, sigma_return_1=sigma_return_1, sigma_return_2=sigma_return_2, file_path=os.path.join(csv_name, os.path.join(save_path, f'loss_df.csv')), file_path_sigma1=os.path.join(csv_name, os.path.join(save_path, f'loss_df_sigma1.csv')), file_path_sigma2=os.path.join(csv_name, os.path.join(save_path, f'loss_df_sigma2.csv')))
-# -
 
-# * 모든 instance에 대한 mean 시각화 및 저장
-# * 이미지 파일 저장 경로 변경
-
-# +
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -1006,7 +800,6 @@ plt.figure(figsize=(10, 6))
 values = np.mean(P_F_I_X_numpy, axis=0)
 plt.bar(range(P_F_I_X_numpy.shape[1]), values, color='blue')
 
-# 값 출력하는 부분 추가
 for i, value in enumerate(values):
     plt.text(i, value, str(value), ha='center', va='bottom', fontsize=8)
     
@@ -1017,20 +810,17 @@ plt.xlabel("Feature Index")
 plt.ylabel("Feature Importance")
 plt.grid(axis='y')  # Optional: Add grid lines for better readability
 
-# 이미지 파일로 저장
+
 save_path = 'figures'
 os.makedirs(os.path.join(csv_name, save_path), exist_ok=True)
 plt.savefig(os.path.join(csv_name, os.path.join(save_path, f'plot_P_F_I_X_{index}.png')))  # 파일 이름에 인덱스를 반영
 
-# 그래프를 화면에 표시하려면 아래의 코드를 사용
-# plt.show()
 
-# 플롯을 저장한 후 클리어
 plt.close()
 
 
 
-# +
+
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -1040,7 +830,6 @@ plt.figure(figsize=(10, 6))
 values = np.mean(P_F_X_I_numpy, axis=0)
 plt.bar(range(P_F_X_I_numpy.shape[1]), values, color='blue')
 
-# 값 출력하는 부분 추가
 for i, value in enumerate(values):
     plt.text(i, value, str(value), ha='center', va='bottom', fontsize=8)
 
@@ -1051,19 +840,13 @@ plt.xlabel("Feature Index")
 plt.ylabel("Feature Importance")
 plt.grid(axis='y')  # Optional: Add grid lines for better readability
 
-# 이미지 파일로 저장
 save_path = 'figures'
 os.makedirs(os.path.join(csv_name, save_path), exist_ok=True)
 plt.savefig(os.path.join(csv_name, os.path.join(save_path, f'plot_P_F_X_I_{index}.png')))  # 파일 이름에 인덱스를 반영
 
-# 그래프를 화면에 표시하려면 아래의 코드를 사용
-# plt.show()
-
-# 플롯을 저장한 후 클리어
 plt.close()
 
 
-# +
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -1076,7 +859,6 @@ plt.figure(figsize=(10, 6))
 values = values = np.mean(mean_PF, axis=0)
 plt.bar(range(mean_PF.shape[1]), values, color='blue')
 
-# 값 출력하는 부분 추가
 for i, value in enumerate(values):
     plt.text(i, value, str(value), ha='center', va='bottom', fontsize=8)
 
@@ -1087,23 +869,13 @@ plt.xlabel("Feature Index")
 plt.ylabel("Feature Importance")
 plt.grid(axis='y')  # Optional: Add grid lines for better readability
 
-# 이미지 파일로 저장
+
 save_path = 'figures'
 os.makedirs(os.path.join(csv_name, save_path), exist_ok=True)
 plt.savefig(os.path.join(csv_name, os.path.join(save_path, f'plot_mean_PF_{index}.png')))  # 파일 이름에 인덱스를 반영
 
-# 그래프를 화면에 표시하려면 아래의 코드를 사용
-# plt.show()
-
-# 플롯을 저장한 후 클리어
 plt.close()
-# -
 
-# ---
-
-# * FI뽑은 것(154, 8)에 모두 csv파일에 저장
-
-# +
 P_F_I_X_numpy = P_F_I_X.detach().cpu().numpy()
 P_F_X_I_numpy = P_F_X_I.detach().cpu().numpy()
 mean_PF = (P_F_X_I_numpy + P_F_I_X_numpy)/2
@@ -1118,13 +890,6 @@ os.makedirs(os.path.join(csv_name, save_path), exist_ok=True)
 P_F_I_X_df.to_csv(os.path.join(csv_name, os.path.join(save_path, f'P_F_I_X_df_{index}.csv')), index=False, header=False)
 P_F_X_I_df.to_csv(os.path.join(csv_name, os.path.join(save_path, f'P_F_X_I_df_{index}.csv')), index=False, header=False)
 mean_PF_df.to_csv(os.path.join(csv_name, os.path.join(save_path, f'mean_PF_df_{index}.csv')), index=False, header=False)
-
-
-
-# +
-## training부터 iteration 반복하는 코드 -> 그냥 for문 사용 안 하기로...
-# -
-
 
 
 
