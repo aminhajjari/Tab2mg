@@ -1,18 +1,3 @@
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: light
-#       format_version: '1.5'
-#       jupytext_version: 1.16.1
-#   kernelspec:
-#     display_name: PyTorch 2.2 (NGC 23.11/Python 3.10) on Backend.AI
-#     language: python
-#     name: python3
-# ---
-
-# +
 import random
 import numpy as np
 import pandas as pd
@@ -28,15 +13,6 @@ import argparse
 import itertools
 import os
 
-from rtdl_num_embeddings import (
-    compute_bins,
-    PeriodicEmbeddings,
-    PiecewiseLinearEncoding,
-    PiecewiseLinearEmbeddings
-)
-from rtdl_revisiting_models import MLP
-
-# argparse 설정
 parser = argparse.ArgumentParser(description="Train a diabetes model with a CSV file.")
 parser.add_argument('--csv', required=True, help="Path to the input CSV file.")
 parser.add_argument('--csv_name', type=str, required=True, help='Path to the dataset (csv)')
@@ -45,7 +21,6 @@ args = parser.parse_args()
 csv_file = args.csv
 csv_name = args.csv_name
 
-# 하이퍼파라미터 설정
 EPOCH = 10
 BATCH_SIZE = 64
 USE_CUDA = torch.cuda.is_available()
@@ -84,7 +59,7 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Load FashionMNIST
 fashionmnist_dataset = datasets.FashionMNIST(
-    root='/home/work/DLmath/seungeun/tab/fashionmnist',
+    root='.',
     train=True,
     download=True,
     transform=transforms.ToTensor()
@@ -92,13 +67,12 @@ fashionmnist_dataset = datasets.FashionMNIST(
 
 # Load MNIST
 mnist_dataset = datasets.MNIST(
-    root='/home/work/DLmath/seungeun/tab/mnist',
+    root='.',
     train=True,
     download=True,
     transform=transforms.ToTensor()
 )
 
-# 라벨에 10을 더하는 커스텀 데이터셋 정의
 class ModifiedLabelDataset(Dataset):
     def __init__(self, dataset, label_offset=10):
         self.dataset = dataset
@@ -111,9 +85,7 @@ class ModifiedLabelDataset(Dataset):
         image, label = self.dataset[idx]
         return image, label + self.label_offset
 
-# 커스텀 데이터셋 생성
 modified_mnist_dataset = ModifiedLabelDataset(mnist_dataset, label_offset=10)
-#######################변경 사항###################################
 
 # Normalize tabular features
 scaler = StandardScaler()
@@ -149,12 +121,11 @@ filtered_mnist = Subset(modified_mnist_dataset,
 # Combine FashionMNIST and MNIST
 combined_dataset = ConcatDataset([filtered_fashion, filtered_mnist])
 
-# 확인용 디버깅 코드
 indices_by_label = {label: [] for label in range(int(len(unique_values)))}
 
 for i, (_, label) in enumerate(combined_dataset):
     if label not in indices_by_label:
-        print(f"Unexpected label {label} at index {i}")  # 잘못된 라벨 출력
+        print(f"Unexpected label {label} at index {i}")
     indices_by_label[label].append(i)
 
 
