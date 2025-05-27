@@ -1,42 +1,3 @@
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: light
-#       format_version: '1.5'
-#       jupytext_version: 1.16.1
-#   kernelspec:
-#     display_name: PyTorch 2.2 (NGC 23.11/Python 3.10) on Backend.AI
-#     language: python
-#     name: python3
-# ---
-
-# * 학습하기 위한 순서<br>1. 터미널에서 개인폴더의 interpretation폴더로 이동<br>2. 터미널에서 아래의 명령어 실행
-# <br><br>**터미널 명령어**<br>
-# seq 200 | xargs -I {} python3 Final_csv_ModelFigSave_mean_mmd_elbo_diabetes_interpretation_val_3.py {} >> Final_csv_ModelFigSave_mean_mmd_elbo_diabetes_interpretation_val_3.txt
-# <br>
-#
-# * 학습 완료 후 models1,2폴더, csv폴더, figures폴더, txt파일을 다른 폴더로 옮기기
-
-# +
-# # !pip install rtdl_num_embeddings
-# # !pip install rtdl_revisiting_models
-# # !pip install shap
-# # !pip install opencv-python==4.5.5.64
-# # !pip install rtdl
-# # !pip install torch --upgrade
-
-
-# +
-# # !pip install librosa==0.10.1
-# # !pip install msgpack==1.0.2
-# # !pip install transformers==4.33.1
-# # !pip install bitsandbytes==0.43.1
-# # !pip install accelerate cudart huggingface_hub torchcontrib
-# # !pip install scikit-learn==1.5.1
-
-# +
 import random
 import os
 import numpy as np
@@ -53,33 +14,7 @@ import torchvision
 from torchvision import datasets, transforms
 import argparse
 import itertools
-
-# from rtdl_num_embeddings import (
-#     compute_bins,
-#     PeriodicEmbeddings,
-#     PiecewiseLinearEncoding,
-#     PiecewiseLinearEmbeddings
-# )
-# from rtdl_revisiting_models import MLP
-
 import shap
-
-# %matplotlib inline
-
-# # # Set the seed value
-# seed = 2
-
-# # Set the random seed for reproducibility
-# random.seed(seed)
-# np.random.seed(seed)
-# torch.manual_seed(seed)
-
-# # # If you are using CUDA, you should also set the seed for GPU computations
-# if torch.cuda.is_available():
-#     torch.cuda.manual_seed(seed)
-#     torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
-#     torch.backends.cudnn.deterministic = True
-#     torch.backends.cudnn.benchmark = False
 
 # Argument parser
 parser = argparse.ArgumentParser(description="Welcome to INTERPRETABLE TAB2IMG")
@@ -99,16 +34,13 @@ index = args.index
 # Load and preprocess the tabular data
 df = pd.read_csv(csv_path)
 
-# 목표 column 결정
 target_col_candidates = ['target', 'class', 'outcome', 'Class', 'binaryClass', 'status', 'Target', 'TR', 'speaker', 'Home/Away', 'Outcome', 'Leaving_Certificate', 'technology', 'signal', 'label', 'Label', 'click', 'percent_pell_grant', 'Survival']
 target_col = next((col for col in df.columns if col.lower() in target_col_candidates), None)
 
-# CSV 데이터 로드 및 전처리
 if target_col == None:
     X = df.iloc[:, :-1].values
     y = df.iloc[:, -1].values
 else:
-    # CSV 데이터 로드 및 전처리
     y = df.loc[:, target_col].values
     X = df.drop(target_col, axis=1).values
 
@@ -128,7 +60,7 @@ DEVICE = torch.device("cuda" if USE_CUDA else "cpu")
 
 # Load FashionMNIST
 fashionmnist_dataset = datasets.FashionMNIST(
-    root='/home/work/DLmath/Subin/tabular/data/fashionmnist',
+    root='.',
     train=True,
     download=True,
     transform=transforms.ToTensor()
@@ -136,13 +68,12 @@ fashionmnist_dataset = datasets.FashionMNIST(
 
 # Load MNIST
 mnist_dataset = datasets.MNIST(
-    root='/home/work/DLmath/seungeun/tab/mnist',
+    root='.',
     train=True,
     download=True,
     transform=transforms.ToTensor()
 )
 
-# 라벨에 10을 더하는 커스텀 데이터셋 정의
 class ModifiedLabelDataset(Dataset):
     def __init__(self, dataset, label_offset=10):
         self.dataset = dataset
@@ -155,7 +86,6 @@ class ModifiedLabelDataset(Dataset):
         image, label = self.dataset[idx]
         return image, label + self.label_offset
 
-# 커스텀 데이터셋 생성
 modified_mnist_dataset = ModifiedLabelDataset(mnist_dataset, label_offset=10)
 
 # # Combine labels for FashionMNIST (0~9) and MNIST (10~19)
