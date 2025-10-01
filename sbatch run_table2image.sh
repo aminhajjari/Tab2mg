@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=4             # 4 CPU cores (A good balance for one GPU)
 #SBATCH --mem=32G                     # 32 GB of memory
 #SBATCH --time=04:00:00               # Request 4 hours (adjust as needed for 50 epochs)
-#SBATCH --mail-user=<YOUR_EMAIL_HERE> # Replace with your email address
+#SBATCH --mail-user=<aminhjjr@gmail.com> # Replace with your email address
 #SBATCH --mail-type=ALL
 #SBATCH --gpus-per-node=a100:1        # Specifically request one A100 GPU
 
