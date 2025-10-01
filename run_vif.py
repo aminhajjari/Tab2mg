@@ -59,18 +59,20 @@ USE_CUDA = torch.cuda.is_available()
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Load FashionMNIST with specified root directory
+# PyTorch will look for FashionMNIST subfolder and extract .gz files if needed
 fashionmnist_dataset = datasets.FashionMNIST(
     root=args.dataset_root,
     train=True,
-    download=False,  # Set to False since datasets already exist
+    download=True,  # Set to True to allow extraction of .gz files
     transform=transforms.ToTensor()
 )
 
 # Load MNIST with specified root directory
+# PyTorch will look for MNIST subfolder and extract .gz files if needed
 mnist_dataset = datasets.MNIST(
     root=args.dataset_root,
     train=True,
-    download=False,  # Set to False since datasets already exist
+    download=True,  # Set to True to allow extraction of .gz files
     transform=transforms.ToTensor()
 )
 
