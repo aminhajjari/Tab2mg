@@ -19,7 +19,7 @@ echo "Running on node: $(hostname)"
 echo "=========================================="
 
 # Define the path to your Python script
-PYTHON_SCRIPT="table2image.py"
+PYTHON_SCRIPT="run_vif.py"
 
 # !!! UPDATE THESE PATHS !!!
 # Path to your CSV dataset
