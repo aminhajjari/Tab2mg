@@ -23,7 +23,7 @@ PYTHON_SCRIPT="run_vif.py"
 
 # !!! UPDATE THESE PATHS !!!
 # Path to your CSV dataset
-CSV_DATA_PATH="/project/def-arashmoh/shahab33/Msc/CSV/adult.data"
+CSV_DATA_PATH="/project/def-arashmoh/shahab33/Msc/CSV/data.csv"
 
 # Path where the model will be saved (include .pt extension)
 SAVE_MODEL_PATH="/project/def-arashmoh/shahab33/Msc/Tab2mg/best_model.pt"
