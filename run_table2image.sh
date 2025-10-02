@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --account=def-arashmoh
-#SBATCH --job-name=Table2Image_CVAE         # Job name
+#SBATCH --job-name=Table2Image_CVAE # Job name
 #SBATCH --nodes=1
-#SBATCH --gpus-per-node=a100:1          # Request one A100 GPU
-#SBATCH --cpus-per-task=4               # 4 CPU cores
-#SBATCH --mem=32G                       # 32 GB of memory
-#SBATCH --time=06:00:00                 # 6 hours runtime
+#SBATCH --gpus-per-node=a100:1 # Request one A100 GPU
+#SBATCH --cpus-per-task=4 # 4 CPU cores
+#SBATCH --mem=32G # 32 GB of memory
+#SBATCH --time=06:00:00 # 6 hours runtime
 #SBATCH --mail-user=aminhjjr@gmail.com
 #SBATCH --mail-type=ALL
 #SBATCH --output=/project/def-arashmoh/shahab33/Msc/OutOrgin/table2image_%j.out
@@ -22,14 +22,13 @@ echo "=========================================="
 PYTHON_SCRIPT="run_vif.py" # Your Python script name
 
 # !!! Your Final Paths !!!
-# Path to your CSV dataset (the 'adult.data' is named 'data.csv' here)
+# Path to your CSV dataset
 CSV_DATA_PATH="/project/def-arashmoh/shahab33/Msc/CSV/data.csv"
 
-# Path where the model will be saved (Saving the final model in the OutOrgin directory)
-# SLURM_JOB_ID variable is used to ensure the filename is unique.
+# Path where the model will be saved
 SAVE_MODEL_PATH="/project/def-arashmoh/shahab33/Msc/OutOrgin/final_cvae_model_${SLURM_JOB_ID}.pth"
 
-# Path to your image datasets (FashionMNIST and MNIST)
+# Path to your image datasets
 DATASET_ROOT="/project/def-arashmoh/shahab33/Msc/datasets"
 
 # Navigate to the directory containing your script
@@ -64,23 +63,23 @@ echo "=========================================="
 
 # Verify required files exist
 if [ ! -f "$CSV_DATA_PATH" ]; then
-    echo "ERROR: CSV file not found at $CSV_DATA_PATH"
-    exit 1
+    echo "ERROR: CSV file not found at $CSV_DATA_PATH"
+    exit 1
 fi
 
 if [ ! -d "$DATASET_ROOT" ]; then
-    echo "ERROR: Dataset root directory not found at $DATASET_ROOT"
-    exit 1
+    echo "ERROR: Dataset root directory not found at $DATASET_ROOT"
+    exit 1
 fi
 
 if [ ! -d "$DATASET_ROOT/FashionMNIST" ]; then
-    echo "WARNING: FashionMNIST dataset not found at $DATASET_ROOT/FashionMNIST"
-    echo "The script will attempt to download it."
+    echo "WARNING: FashionMNIST dataset not found at $DATASET_ROOT/FashionMNIST"
+    echo "The script will attempt to download it."
 fi
 
 if [ ! -d "$DATASET_ROOT/MNIST" ]; then
-    echo "WARNING: MNIST dataset not found at $DATASET_ROOT/MNIST"
-    echo "The script will attempt to download it."
+    echo "WARNING: MNIST dataset not found at $DATASET_ROOT/MNIST"
+    echo "The script will attempt to download it."
 fi
 
 echo "=========================================="
@@ -89,18 +88,18 @@ echo "=========================================="
 
 # Execute the Python script with its required arguments
 python "$PYTHON_SCRIPT" \
-    --csv "$CSV_DATA_PATH" \
-    --save_dir "$SAVE_MODEL_PATH" \
-    --dataset_root "$DATASET_ROOT"
+    --csv "$CSV_DATA_PATH" \
+    --save_dir "$SAVE_MODEL_PATH" \
+    --dataset_root "$DATASET_ROOT"
 
 exit_code=$?
 
 echo "=========================================="
 if [ $exit_code -eq 0 ]; then
-    echo "Job completed successfully!"
-    echo "Model saved to: $SAVE_MODEL_PATH"
+    echo "Job completed successfully!"
+    echo "Model saved to: $SAVE_MODEL_PATH"
 else
-    echo "Job failed with exit code: $exit_code"
+    echo "Job failed with exit code: $exit_code"
 fi
 echo "Job finished at: $(date)"
 echo "=========================================="
