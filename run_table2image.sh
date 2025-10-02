@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --account=def-arashmoh
-#SBATCH --job-name=Table2Image_CVAE # Job name
+#SBATCH --job-name=Table2Image_CVAE
 #SBATCH --nodes=1
-#SBATCH --gpus-per-node=a100:1 # Request one A100 GPU
-#SBATCH --cpus-per-task=4 # 4 CPU cores
-#SBATCH --mem=32G # 32 GB of memory
-#SBATCH --time=06:00:00 # 6 hours runtime
+#SBATCH --gpus-per-node=a100:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --time=06:00:00
 #SBATCH --mail-user=aminhjjr@gmail.com
 #SBATCH --mail-type=ALL
 #SBATCH --output=/project/def-arashmoh/shahab33/Msc/OutOrgin/table2image_%j.out
@@ -42,11 +42,16 @@ echo "Model Save Path: $SAVE_MODEL_PATH"
 echo "Dataset Root: $DATASET_ROOT"
 echo "=========================================="
 
-# Load necessary modules
+# ------------------------------------
+# --- FIX: Load necessary modules ---
+# Use the compatible stack: StdEnv/2023 + Intel compiler + CUDA/11.8
+# Python/3.11 is loaded via StdEnv, but explicit load is often safer.
 module purge
-module load python/3.11
-module load cuda/11.8
-module load scipy-stack
+module load StdEnv/2023
+module load intel/2023.2.1  # Required by cuda/11.8
+module load cuda/11.8       # Now this should load correctly
+# Remove module load scipy-stack as it is likely incompatible with the intel stack.
+# ------------------------------------
 
 echo "Loaded modules:"
 module list
@@ -61,7 +66,7 @@ echo "CUDA available: $(python -c 'import torch; print(torch.cuda.is_available()
 echo "GPU device: $(python -c 'import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU")')"
 echo "=========================================="
 
-# Verify required files exist
+# Verify required files exist (Good practice, keep this)
 if [ ! -f "$CSV_DATA_PATH" ]; then
     echo "ERROR: CSV file not found at $CSV_DATA_PATH"
     exit 1
