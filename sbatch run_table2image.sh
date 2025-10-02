@@ -44,7 +44,7 @@ echo "=========================================="
 
 # Load necessary modules
 module purge
-module load python/3.10
+module load python/3.11
 module load cuda/11.8
 module load scipy-stack  # For statsmodels and sklearn
 
