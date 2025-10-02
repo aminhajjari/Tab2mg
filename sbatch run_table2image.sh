@@ -8,8 +8,8 @@
 #SBATCH --time=06:00:00               # 6 hours for 50 epochs (increased from 4)
 #SBATCH --mail-user=aminhjjr@gmail.com
 #SBATCH --mail-type=ALL
-#SBATCH --output=table2image_%j.out   # Output file with job ID
-#SBATCH --error=table2image_%j.err    # Error file with job ID
+#SBATCH --output=/project/def-arashmoh/shahab33/Msc/OutOrgin/table2image_%j.out
+#SBATCH --error=/project/def-arashmoh/shahab33/Msc/OutOrgin/table2image_%j.errD
 
 # --- Environment Setup ---
 echo "=========================================="
