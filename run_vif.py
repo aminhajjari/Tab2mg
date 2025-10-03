@@ -14,7 +14,7 @@ from torchvision import datasets, transforms
 import itertools
 import argparse
 import os
-
+######################
 # Argument parser
 parser = argparse.ArgumentParser(description="Welcome to Table2Image")
 parser.add_argument('--csv', type=str, required=True, help='Path to the dataset (csv)')
