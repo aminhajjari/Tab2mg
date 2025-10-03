@@ -36,19 +36,64 @@ os.makedirs(os.path.dirname(saving_path), exist_ok=True)
 
 # Load and preprocess the tabular data
 df = pd.read_csv(csv_path)
+
+# Print dataset info for debugging
+print(f"Dataset shape: {df.shape}")
+print(f"Columns: {df.columns.tolist()}")
+print(f"Missing values per column:\n{df.isnull().sum()}")
+
 target_col_candidates = ['target', 'class', 'outcome', 'Class', 'binaryClass', 'status', 'Target', 'TR', 'speaker', 'Home/Away', 'Outcome', 'Leaving_Certificate', 'technology', 'signal', 'label', 'Label', 'click', 'percent_pell_grant', 'Survival']
 target_col = next((col for col in df.columns if col.lower() in [c.lower() for c in target_col_candidates]), None)
 
 if target_col == None:
     X = df.iloc[:, :-1].values
     y = df.iloc[:, -1].values
+    target_col = df.columns[-1]  # For printing purposes
 else:
     y = df.loc[:, target_col].values
     X = df.drop(target_col, axis=1).values
 
+print(f"Using '{target_col}' as target column")
+print(f"Original data shape - X: {X.shape}, y: {y.shape}")
+
+# Handle missing values in target column
+# Option 1: Remove rows with NaN in target
+nan_mask = pd.isna(y)
+if nan_mask.any():
+    print(f"Found {nan_mask.sum()} NaN values in target column. Removing these rows...")
+    X = X[~nan_mask]
+    y = y[~nan_mask]
+    print(f"After removing NaN rows - X: {X.shape}, y: {y.shape}")
+
+# Handle missing values in features
+# Option 1: Remove rows with any NaN in features (you can also use imputation)
+if np.isnan(X).any():
+    print(f"Found NaN values in features. Handling them...")
+    # Convert to DataFrame for easier handling
+    X_df = pd.DataFrame(X)
+    
+    # Option 1a: Remove rows with any NaN
+    # nan_rows = X_df.isnull().any(axis=1)
+    # X = X_df[~nan_rows].values
+    # y = y[~nan_rows]
+    
+    # Option 1b: Fill NaN with column mean (for numerical features)
+    from sklearn.impute import SimpleImputer
+    imputer = SimpleImputer(strategy='mean')
+    X = imputer.fit_transform(X)
+    print(f"Filled NaN values with column means")
+    print(f"After handling NaN in features - X: {X.shape}, y: {y.shape}")
+
+# Ensure y has no NaN values before mapping
+if pd.isna(y).any():
+    raise ValueError("Target column still contains NaN values after cleaning!")
+
 # Mapping labels for classes
 unique_values = sorted(set(y))
-num_classes=int(len(unique_values))
+print(f"Unique target values: {unique_values}")
+print(f"Number of classes: {len(unique_values)}")
+
+num_classes = int(len(unique_values))
 value_map = {unique_values[i]: i for i in range(len(unique_values))}
 y = [value_map[val] for val in y]
 y = np.array(y)
@@ -223,11 +268,27 @@ class SimpleMLP(nn.Module):
 model_with_embeddings = SimpleMLP(tab_latent_size)
 
 # VIF Embedding
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
 def calculate_vif(df):
+    """Calculate VIF with error handling for singular matrices"""
     df = pd.DataFrame(df)
     vif_data = pd.DataFrame()
     vif_data["feature"] = df.columns
-    vif_data["VIF"] = [variance_inflation_factor(df.values, i) for i in range(df.shape[1])]
+    vif_values = []
+    
+    for i in range(df.shape[1]):
+        try:
+            vif = variance_inflation_factor(df.values, i)
+            # Handle infinite or very large VIF values
+            if np.isinf(vif) or vif > 1000:
+                vif = 1000  # Cap at 1000
+            vif_values.append(vif)
+        except:
+            # If VIF calculation fails, use default value
+            vif_values.append(1.0)
+            
+    vif_data["VIF"] = vif_values
     return vif_data
 
 class VIFInitialization(nn.Module):
@@ -243,9 +304,11 @@ class VIFInitialization(nn.Module):
     def initialize_weights(self):
         with torch.no_grad():
             vif_tensor = torch.tensor(self.vif_values, dtype=torch.float32)
-            inv_vif = 1 / vif_tensor
+            # Add small epsilon to avoid division by zero
+            inv_vif = 1 / (vif_tensor + 1e-8)
             for i in range(self.input_dim):
-                self.fc1.weight.data[i, :] = inv_vif[i] / (self.input_dim + 4)
+                if i < len(inv_vif):
+                    self.fc1.weight.data[i, :] = inv_vif[i] / (self.input_dim + 4)
             nn.init.xavier_uniform_(self.fc2.weight)
 
     def forward(self, x):
@@ -307,7 +370,7 @@ def train(model, train_data_loader, optimizer, epoch):
         img_data = img_data.view(-1, 28*28).to(DEVICE)
         tab_data = tab_data.to(DEVICE)
         img_label = img_label.to(DEVICE)
-        tab_label = tab_label.to(DEVICE).float()
+        tab_label = tab_label.to(DEVICE)
         
         optimizer.zero_grad()
         
@@ -315,16 +378,15 @@ def train(model, train_data_loader, optimizer, epoch):
         x_rand = torch.Tensor(random_array).to(DEVICE)
         
         recon_x, tab_pred, img_pred = model(x_rand, tab_data)
-        tab_pred = tab_pred.squeeze(-1).float()
-        img_pred = img_pred.squeeze(-1).float()
 
         loss = loss_function(recon_x, img_data, tab_pred, tab_label, img_pred, img_label)
         loss.backward()
         train_loss += loss.item()
         optimizer.step()
+    
+    print(f"Epoch [{epoch}/{EPOCH}], Loss: {train_loss/len(train_data_loader):.4f}")
 
 from sklearn.metrics import roc_auc_score
-from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, best_model_path='best_model.pth'):
     model.eval()
@@ -339,55 +401,61 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
     total_img = {i: 0 for i in range(num_classes)}
     
     all_tab_labels = []
-    all_tab_preds = []
+    all_tab_preds_proba = []
     all_img_labels = []
-    all_img_preds = []
+    all_img_preds_proba = []
 
     with torch.no_grad():
         for tab_data, tab_label, img_data, img_label in test_data_loader:
             img_data = img_data.view(-1, 28*28).to(DEVICE)
             tab_data = tab_data.to(DEVICE)
             img_label = img_label.to(DEVICE)
-            tab_label = tab_label.to(DEVICE).float()
+            tab_label = tab_label.to(DEVICE)
             
             random_array = np.random.rand(img_data.shape[0], 28*28)
             x_rand = torch.Tensor(random_array).view(-1, 28*28).to(DEVICE)
             
             recon_x, tab_pred, img_pred = model(x_rand, tab_data)
-            tab_pred = tab_pred.squeeze(-1).float()
-            img_pred = img_pred.squeeze(-1).float()
             
             test_loss += loss_function(recon_x, img_data, tab_pred, tab_label, img_pred, img_label).item()
             
+            # Store labels and probabilities for AUC calculation
             all_tab_labels.extend(tab_label.cpu().numpy())
-            all_tab_preds.extend(tab_pred.cpu().numpy())
             all_img_labels.extend(img_label.cpu().numpy())
-            all_img_preds.extend(img_pred.cpu().numpy())
+            
+            # Get probabilities for AUC
+            if num_classes > 2:
+                all_tab_preds_proba.extend(F.softmax(tab_pred, dim=1).cpu().numpy())
+                all_img_preds_proba.extend(F.softmax(img_pred, dim=1).cpu().numpy())
+            else:
+                # For binary classification
+                all_tab_preds_proba.extend(torch.sigmoid(tab_pred).cpu().numpy())
+                all_img_preds_proba.extend(torch.sigmoid(img_pred).cpu().numpy())
 
-            if tab_pred.dim() == 1:
-                tab_predicted = (tab_pred > 0.5).long()
+            # Get predictions
+            if tab_pred.dim() == 1 or (tab_pred.dim() == 2 and tab_pred.shape[1] == 1):
+                tab_predicted = (torch.sigmoid(tab_pred.squeeze()) > 0.5).long()
             else:
                 tab_predicted = torch.argmax(tab_pred, dim=1)
             
-            for i in range(len(tab_label)):
-                label = torch.argmax(tab_label[i]).item()
-                correct_tab[label] += (tab_predicted[i] == label).item()
-                total_tab[label] += 1
-
-            if img_pred.dim() == 1:
-                img_predicted = (img_pred > 0.5).long()
+            if img_pred.dim() == 1 or (img_pred.dim() == 2 and img_pred.shape[1] == 1):
+                img_predicted = (torch.sigmoid(img_pred.squeeze()) > 0.5).long()
             else:
                 img_predicted = torch.argmax(img_pred, dim=1)
             
+            # Calculate per-class accuracy
+            for i in range(len(tab_label)):
+                label = tab_label[i].item()
+                correct_tab[label] += (tab_predicted[i] == label).item()
+                total_tab[label] += 1
+                
             for i in range(len(img_label)):
-                label = torch.argmax(img_label[i]).item()
+                label = img_label[i].item()
                 correct_img[label] += (img_predicted[i] == label).item()
                 total_img[label] += 1
                 
-            tab_label_indices = tab_label
-            correct_tab_total += (tab_predicted == tab_label_indices).sum().item()
-            img_label_indices = img_label
-            correct_img_total += (img_predicted == img_label_indices).sum().item()
+            correct_tab_total += (tab_predicted == tab_label).sum().item()
+            correct_img_total += (img_predicted == img_label).sum().item()
             total += tab_label.size(0)
     
     test_loss /= len(test_data_loader)
@@ -396,25 +464,56 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
     tab_accuracy = {cls: (correct_tab[cls] / total_tab[cls]) * 100 if total_tab[cls] > 0 else 0 for cls in range(num_classes)}
     img_accuracy = {cls: (correct_img[cls] / total_img[cls]) * 100 if total_img[cls] > 0 else 0 for cls in range(num_classes)}
 
-    tab_auc = roc_auc_score(all_tab_labels, all_tab_preds, multi_class="ovr", average="macro")
-    img_auc = roc_auc_score(all_img_labels, all_img_preds, multi_class="ovr", average="macro")
+    # Calculate AUC
+    try:
+        if num_classes > 2:
+            tab_auc = roc_auc_score(all_tab_labels, all_tab_preds_proba, multi_class="ovr", average="macro")
+            img_auc = roc_auc_score(all_img_labels, all_img_preds_proba, multi_class="ovr", average="macro")
+        else:
+            # Binary classification
+            tab_auc = roc_auc_score(all_tab_labels, all_tab_preds_proba)
+            img_auc = roc_auc_score(all_img_labels, all_img_preds_proba)
+    except:
+        print("Could not calculate AUC - possibly only one class in test set")
+        tab_auc = 0
+        img_auc = 0
 
+    print(f"Epoch [{epoch}/{EPOCH}]")
+    print(f"Test Loss: {test_loss:.4f}")
+    print(f"Tab Accuracy: {tab_accuracy_total:.2f}%, Tab AUC: {tab_auc:.4f}")
+    print(f"Img Accuracy: {img_accuracy_total:.2f}%, Img AUC: {img_auc:.4f}")
+    
     if img_accuracy_total > best_accuracy:
         best_accuracy = img_accuracy_total
         best_epoch = epoch
         torch.save(model.state_dict(), best_model_path)
+        print(f"Saved best model with accuracy: {best_accuracy:.2f}%")
         
     if img_auc > best_auc:
         best_auc = img_auc
 
     return best_accuracy, best_auc, best_epoch
 
+# Training loop
 best_accuracy = 0
 best_auc = 0
 best_epoch = 0
+
+print("\nStarting training...")
+print(f"Number of epochs: {EPOCH}")
+print(f"Batch size: {BATCH_SIZE}")
+print(f"Device: {DEVICE}")
+print(f"Number of classes: {num_classes}")
+print(f"Number of features: {n_cont_features}")
+print("-" * 50)
 
 for epoch in range(1, EPOCH + 1):
     train(cvae, train_synchronized_loader, optimizer, epoch)
     best_accuracy, best_auc, best_epoch = test(cvae, test_synchronized_loader, epoch, best_accuracy, best_auc, best_epoch, best_model_path=saving_path)
 
-print(f'Best model image classification accuracy: {best_accuracy:.4f} at epoch: {best_epoch}, Best AUC: {best_auc:.4f}')
+print("\n" + "=" * 50)
+print(f'Training completed!')
+print(f'Best model image classification accuracy: {best_accuracy:.4f} at epoch: {best_epoch}')
+print(f'Best AUC: {best_auc:.4f}')
+print(f'Model saved to: {saving_path}')
+print("=" * 50)
