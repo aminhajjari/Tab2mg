@@ -1,3 +1,4 @@
+#!/usr/bin/python
 import random
 import numpy as np
 import pandas as pd
@@ -14,14 +15,25 @@ from torchvision import datasets, transforms
 import itertools
 import argparse
 import os
+
+# <<< DEBUG >>>
+print("--- Python script starting ---")
+
 ######################
 # Argument parser
 parser = argparse.ArgumentParser(description="Welcome to Table2Image")
 parser.add_argument('--csv', type=str, required=True, help='Path to the dataset (csv)')
 parser.add_argument('--save_dir', type=str, required=True, help='Path to save the final model')
-parser.add_argument('--dataset_root', type=str, default='/project/def-arashmoh/shahab33/Msc/datasets', 
+parser.add_argument('--dataset_root', type=str, default='/project/def-arashmoh/shahab33/Msc/datasets',
                     help='Root directory for image datasets (FashionMNIST and MNIST)')
 args = parser.parse_args()
+
+# <<< DEBUG >>>
+print("\n--- Arguments Parsed ---")
+print(f"CSV Path: {args.csv}")
+print(f"Save Directory: {args.save_dir}")
+print(f"Dataset Root: {args.dataset_root}")
+print("------------------------\n")
 
 # Parameters
 EPOCH = 50
@@ -33,55 +45,50 @@ saving_path = args.save_dir
 
 # Ensure saving directory exists
 os.makedirs(os.path.dirname(saving_path), exist_ok=True)
+# <<< DEBUG >>>
+print(f"Ensured save directory exists: {os.path.dirname(saving_path)}")
 
 # Load and preprocess the tabular data
 df = pd.read_csv(csv_path)
 
 # Print dataset info for debugging
+print(f"--- Tabular Data Initial Load ---")
 print(f"Dataset shape: {df.shape}")
 print(f"Columns: {df.columns.tolist()}")
 print(f"Missing values per column:\n{df.isnull().sum()}")
+print("---------------------------------\n")
 
 target_col_candidates = ['target', 'class', 'outcome', 'Class', 'binaryClass', 'status', 'Target', 'TR', 'speaker', 'Home/Away', 'Outcome', 'Leaving_Certificate', 'technology', 'signal', 'label', 'Label', 'click', 'percent_pell_grant', 'Survival']
 target_col = next((col for col in df.columns if col.lower() in [c.lower() for c in target_col_candidates]), None)
 
-if target_col == None:
+if target_col is None:
+    # <<< DEBUG >>>
+    print("Target column not found in candidates, defaulting to the last column.")
     X = df.iloc[:, :-1].values
     y = df.iloc[:, -1].values
-    target_col = df.columns[-1]  # For printing purposes
+    target_col = df.columns[-1]
 else:
+    # <<< DEBUG >>>
+    print(f"Found '{target_col}' as the target column.")
     y = df.loc[:, target_col].values
     X = df.drop(target_col, axis=1).values
 
-print(f"Using '{target_col}' as target column")
 print(f"Original data shape - X: {X.shape}, y: {y.shape}")
 
 # Handle missing values in target column
-# Option 1: Remove rows with NaN in target
 nan_mask = pd.isna(y)
 if nan_mask.any():
     print(f"Found {nan_mask.sum()} NaN values in target column. Removing these rows...")
     X = X[~nan_mask]
     y = y[~nan_mask]
-    print(f"After removing NaN rows - X: {X.shape}, y: {y.shape}")
+    print(f"After removing NaN rows from target - X: {X.shape}, y: {y.shape}")
 
 # Handle missing values in features
-# Option 1: Remove rows with any NaN in features (you can also use imputation)
 if np.isnan(X).any():
-    print(f"Found NaN values in features. Handling them...")
-    # Convert to DataFrame for easier handling
-    X_df = pd.DataFrame(X)
-    
-    # Option 1a: Remove rows with any NaN
-    # nan_rows = X_df.isnull().any(axis=1)
-    # X = X_df[~nan_rows].values
-    # y = y[~nan_rows]
-    
-    # Option 1b: Fill NaN with column mean (for numerical features)
+    print(f"Found NaN values in features. Filling with column means...")
     from sklearn.impute import SimpleImputer
     imputer = SimpleImputer(strategy='mean')
     X = imputer.fit_transform(X)
-    print(f"Filled NaN values with column means")
     print(f"After handling NaN in features - X: {X.shape}, y: {y.shape}")
 
 # Ensure y has no NaN values before mapping
@@ -90,46 +97,50 @@ if pd.isna(y).any():
 
 # Mapping labels for classes
 unique_values = sorted(set(y))
+print(f"\n--- Class Label Mapping ---")
 print(f"Unique target values: {unique_values}")
-print(f"Number of classes: {len(unique_values)}")
-
 num_classes = int(len(unique_values))
+print(f"Number of classes: {num_classes}")
 value_map = {unique_values[i]: i for i in range(len(unique_values))}
 y = [value_map[val] for val in y]
 y = np.array(y)
+print("---------------------------\n")
 
 n_cont_features = X.shape[1]
 tab_latent_size = n_cont_features + 4
 USE_CUDA = torch.cuda.is_available()
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# <<< DEBUG >>>
+print(f"Device set to: {DEVICE}")
 
-# Load FashionMNIST with specified root directory
-# PyTorch will look for FashionMNIST subfolder and extract .gz files if needed
+# Load FashionMNIST
+# <<< DEBUG >>>
+print("Loading/Verifying FashionMNIST dataset...")
 fashionmnist_dataset = datasets.FashionMNIST(
     root=args.dataset_root,
     train=True,
-    download=True,  # Set to True to allow extraction of .gz files
+    download=True,
     transform=transforms.ToTensor()
 )
+print("FashionMNIST loaded.")
 
-# Load MNIST with specified root directory
-# PyTorch will look for MNIST subfolder and extract .gz files if needed
+# Load MNIST
+# <<< DEBUG >>>
+print("Loading/Verifying MNIST dataset...")
 mnist_dataset = datasets.MNIST(
     root=args.dataset_root,
     train=True,
-    download=True,  # Set to True to allow extraction of .gz files
+    download=True,
     transform=transforms.ToTensor()
 )
+print("MNIST loaded.")
 
-# Target + 10 (MNIST)
 class ModifiedLabelDataset(Dataset):
     def __init__(self, dataset, label_offset=10):
         self.dataset = dataset
         self.label_offset = label_offset
-
     def __len__(self):
         return len(self.dataset)
-
     def __getitem__(self, idx):
         image, label = self.dataset[idx]
         return image, label + self.label_offset
@@ -139,9 +150,14 @@ modified_mnist_dataset = ModifiedLabelDataset(mnist_dataset, label_offset=10)
 # Normalize tabular features
 scaler = StandardScaler()
 X = scaler.fit_transform(X)
+# <<< DEBUG >>>
+print("Tabular features standardized.")
 
 # Split tabular data into train and test sets
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+# <<< DEBUG >>>
+print(f"Tabular data split: Train X shape: {X_train.shape}, Test X shape: {X_test.shape}")
+
 
 # Create TensorDatasets
 train_tabular_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.long))
@@ -150,26 +166,28 @@ test_tabular_dataset = TensorDataset(torch.tensor(X_test, dtype=torch.float32), 
 # Calculate number of samples needed for each label
 train_tabular_label_counts = torch.bincount(train_tabular_dataset.tensors[1], minlength=int(len(unique_values)))
 test_tabular_label_counts = torch.bincount(test_tabular_dataset.tensors[1], minlength=int(len(unique_values)))
-
 num_samples_needed = train_tabular_label_counts.tolist()
 num_samples_needed_test = test_tabular_label_counts.tolist()
+# <<< DEBUG >>>
+print(f"\n--- Dataset Synchronization ---")
+print(f"Required samples per class (Train): {num_samples_needed}")
+print(f"Required samples per class (Test): {num_samples_needed_test}")
 
 valid_labels = {i for i in range(len(unique_values))}
 
 # Filter FashionMNIST dataset
-filtered_fashion = Subset(fashionmnist_dataset, 
+filtered_fashion = Subset(fashionmnist_dataset,
                           [i for i, (_, label) in enumerate(fashionmnist_dataset) if label in valid_labels])
-
-# Filter MNIST dataset and remap labels
-filtered_mnist = Subset(modified_mnist_dataset, 
+filtered_mnist = Subset(modified_mnist_dataset,
                         [i for i, (_, label) in enumerate(modified_mnist_dataset) if label in valid_labels])
 
 # Combine FashionMNIST and MNIST
 combined_dataset = ConcatDataset([filtered_fashion, filtered_mnist])
+# <<< DEBUG >>>
+print(f"Total images in combined pool: {len(combined_dataset)}")
 
 # Integrity check
 indices_by_label = {label: [] for label in range(int(len(unique_values)))}
-
 for i, (_, label) in enumerate(combined_dataset):
     if label not in indices_by_label:
         print(f"Unexpected label {label} at index {i}")
@@ -185,14 +203,11 @@ repeated_indices = {
 # Align the train and test indices for both tabular and image datasets by label
 aligned_train_indices = []
 aligned_test_indices = []
-
 for label in valid_labels:
     train_tab_indices = [i for i, lbl in enumerate(y_train) if lbl == label]
     test_tab_indices = [i for i, lbl in enumerate(y_test) if lbl == label]
-
     train_img_indices = repeated_indices[label][:num_samples_needed[label]]
     test_img_indices = repeated_indices[label][num_samples_needed[label]:num_samples_needed[label] + num_samples_needed_test[label]]
-
     if len(train_tab_indices) == len(train_img_indices) and len(test_tab_indices) == len(test_img_indices):
         aligned_train_indices.extend(list(zip(train_tab_indices, train_img_indices)))
         aligned_test_indices.extend(list(zip(test_tab_indices, test_img_indices)))
@@ -202,20 +217,22 @@ for label in valid_labels:
 # Create final filtered subsets with aligned indices
 train_filtered_tab_set = Subset(train_tabular_dataset, [idx[0] for idx in aligned_train_indices])
 train_filtered_img_set = Subset(combined_dataset, [idx[1] for idx in aligned_train_indices])
-
 test_filtered_tab_set = Subset(test_tabular_dataset, [idx[0] for idx in aligned_test_indices])
 test_filtered_img_set = Subset(combined_dataset, [idx[1] for idx in aligned_test_indices])
 
-# Define synchronized dataset class with consistency check
+# <<< DEBUG >>>
+print(f"Final synchronized train set size: {len(train_filtered_tab_set)}")
+print(f"Final synchronized test set size: {len(test_filtered_tab_set)}")
+print("-----------------------------\n")
+
+# Define synchronized dataset class
 class SynchronizedDataset(Dataset):
     def __init__(self, tabular_dataset, image_dataset):
         self.tabular_dataset = tabular_dataset
         self.image_dataset = image_dataset
         assert len(self.tabular_dataset) == len(self.image_dataset), "Datasets must have the same length."
-
     def __len__(self):
         return len(self.tabular_dataset)
-
     def __getitem__(self, index):
         tab_data, tab_label = self.tabular_dataset[index]
         img_data, img_label = self.image_dataset[index]
@@ -229,7 +246,10 @@ test_synchronized_dataset = SynchronizedDataset(test_filtered_tab_set, test_filt
 # Create data loaders
 train_synchronized_loader = DataLoader(dataset=train_synchronized_dataset, batch_size=BATCH_SIZE, shuffle=True)
 test_synchronized_loader = DataLoader(dataset=test_synchronized_dataset, batch_size=BATCH_SIZE)
+# <<< DEBUG >>>
+print("DataLoaders created.")
 
+# ... [The rest of your model definitions, train, and test functions remain the same] ...
 class SimpleCNN(nn.Module):
     def __init__(self, num_classes=2):
         super(SimpleCNN, self).__init__()
@@ -267,27 +287,21 @@ class SimpleMLP(nn.Module):
 
 model_with_embeddings = SimpleMLP(tab_latent_size)
 
-# VIF Embedding
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 def calculate_vif(df):
-    """Calculate VIF with error handling for singular matrices"""
     df = pd.DataFrame(df)
     vif_data = pd.DataFrame()
     vif_data["feature"] = df.columns
     vif_values = []
-    
     for i in range(df.shape[1]):
         try:
             vif = variance_inflation_factor(df.values, i)
-            # Handle infinite or very large VIF values
             if np.isinf(vif) or vif > 1000:
-                vif = 1000  # Cap at 1000
+                vif = 1000
             vif_values.append(vif)
         except:
-            # If VIF calculation fails, use default value
             vif_values.append(1.0)
-            
     vif_data["VIF"] = vif_values
     return vif_data
 
@@ -304,7 +318,6 @@ class VIFInitialization(nn.Module):
     def initialize_weights(self):
         with torch.no_grad():
             vif_tensor = torch.tensor(self.vif_values, dtype=torch.float32)
-            # Add small epsilon to avoid division by zero
             inv_vif = 1 / (vif_tensor + 1e-8)
             for i in range(self.input_dim):
                 if i < len(inv_vif):
@@ -352,8 +365,11 @@ class CVAEWithTabEmbedding(nn.Module):
         img_pred = self.final_classifier(recon_x.view(-1, 1, 28, 28))
         return recon_x, tab_pred, img_pred
 
+# <<< DEBUG >>>
+print("Initializing CVAE model...")
 cvae = CVAEWithTabEmbedding(tab_latent_size).to(DEVICE)
 optimizer = optim.AdamW(cvae.parameters(), lr=0.001)
+print("Model and optimizer initialized.")
 
 def loss_function(recon_x, x, tab_pred, tab_labels, img_pred, img_labels):
     BCE = F.mse_loss(recon_x, x)
@@ -366,7 +382,8 @@ def train(model, train_data_loader, optimizer, epoch):
     train_loss = 0
     num_classes = int(len(unique_values))
     
-    for tab_data, tab_label, img_data, img_label in train_data_loader:
+    # <<< DEBUG >>> Added batch tracking
+    for batch_idx, (tab_data, tab_label, img_data, img_label) in enumerate(train_data_loader):
         img_data = img_data.view(-1, 28*28).to(DEVICE)
         tab_data = tab_data.to(DEVICE)
         img_label = img_label.to(DEVICE)
@@ -419,20 +436,16 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
             
             test_loss += loss_function(recon_x, img_data, tab_pred, tab_label, img_pred, img_label).item()
             
-            # Store labels and probabilities for AUC calculation
             all_tab_labels.extend(tab_label.cpu().numpy())
             all_img_labels.extend(img_label.cpu().numpy())
             
-            # Get probabilities for AUC
             if num_classes > 2:
                 all_tab_preds_proba.extend(F.softmax(tab_pred, dim=1).cpu().numpy())
                 all_img_preds_proba.extend(F.softmax(img_pred, dim=1).cpu().numpy())
             else:
-                # For binary classification
                 all_tab_preds_proba.extend(torch.sigmoid(tab_pred).cpu().numpy())
                 all_img_preds_proba.extend(torch.sigmoid(img_pred).cpu().numpy())
 
-            # Get predictions
             if tab_pred.dim() == 1 or (tab_pred.dim() == 2 and tab_pred.shape[1] == 1):
                 tab_predicted = (torch.sigmoid(tab_pred.squeeze()) > 0.5).long()
             else:
@@ -443,12 +456,11 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
             else:
                 img_predicted = torch.argmax(img_pred, dim=1)
             
-            # Calculate per-class accuracy
             for i in range(len(tab_label)):
                 label = tab_label[i].item()
                 correct_tab[label] += (tab_predicted[i] == label).item()
                 total_tab[label] += 1
-                
+            
             for i in range(len(img_label)):
                 label = img_label[i].item()
                 correct_img[label] += (img_predicted[i] == label).item()
@@ -464,13 +476,11 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
     tab_accuracy = {cls: (correct_tab[cls] / total_tab[cls]) * 100 if total_tab[cls] > 0 else 0 for cls in range(num_classes)}
     img_accuracy = {cls: (correct_img[cls] / total_img[cls]) * 100 if total_img[cls] > 0 else 0 for cls in range(num_classes)}
 
-    # Calculate AUC
     try:
         if num_classes > 2:
             tab_auc = roc_auc_score(all_tab_labels, all_tab_preds_proba, multi_class="ovr", average="macro")
             img_auc = roc_auc_score(all_img_labels, all_img_preds_proba, multi_class="ovr", average="macro")
         else:
-            # Binary classification
             tab_auc = roc_auc_score(all_tab_labels, all_tab_preds_proba)
             img_auc = roc_auc_score(all_img_labels, all_img_preds_proba)
     except:
@@ -499,7 +509,7 @@ best_accuracy = 0
 best_auc = 0
 best_epoch = 0
 
-print("\nStarting training...")
+print("\n--- Starting training loop ---")
 print(f"Number of epochs: {EPOCH}")
 print(f"Batch size: {BATCH_SIZE}")
 print(f"Device: {DEVICE}")
@@ -517,3 +527,6 @@ print(f'Best model image classification accuracy: {best_accuracy:.4f} at epoch: 
 print(f'Best AUC: {best_auc:.4f}')
 print(f'Model saved to: {saving_path}')
 print("=" * 50)
+
+# <<< DEBUG >>>
+print("--- Python script finished successfully ---")
