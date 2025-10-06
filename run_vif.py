@@ -69,18 +69,22 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # ... rest of your code continues unchanged ...
 
 # Load FashionMNIST
+# Define data directory where datasets are already downloaded
+DATA_DIR = '/project/def-arashmoh/shahab33/Msc/datasets'
+
+# Load FashionMNIST (download=False since already downloaded)
 fashionmnist_dataset = datasets.FashionMNIST(
-    root='.',
+    root=DATA_DIR,
     train=True,
-    download=True,
+    download=False,  # Changed to False
     transform=transforms.ToTensor()
 )
 
-# Load MNIST
+# Load MNIST (download=False since already downloaded)
 mnist_dataset = datasets.MNIST(
-    root='.',
+    root=DATA_DIR,
     train=True,
-    download=True,
+    download=False,  # Changed to False
     transform=transforms.ToTensor()
 )
 
