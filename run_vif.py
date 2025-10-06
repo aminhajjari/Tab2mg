@@ -32,7 +32,7 @@ saving_path = args.save_dir + '.pt'
 # Load and preprocess the tabular data
 df = pd.read_csv(csv_path)
 target_col_candidates = ['target', 'class', 'outcome', 'Class', 'binaryClass', 'status', 'Target', 'TR', 'speaker', 'Home/Away', 'Outcome', 'Leaving_Certificate', 'technology', 'signal', 'label', 'Label', 'click', 'percent_pell_grant', 'Survival']
-target_col = next((col for col in df.columns if col.lower() in target_col_candidates), None)
+target_col = next((col for col in df.columns if col.lower() in [c.lower() for c in target_col_candidates]), None)
 
 if target_col == None:
     X = df.iloc[:, :-1].values
@@ -41,9 +41,22 @@ else:
     y = df.loc[:, target_col].values
     X = df.drop(target_col, axis=1).values
 
+# ===== FIX: Remove samples with NaN in target variable =====
+# Create a mask for valid (non-NaN) target values
+valid_mask = ~pd.isna(y)
+
+# Filter both X and y to keep only valid samples
+X = X[valid_mask]
+y = y[valid_mask]
+
+print(f"Original dataset size: {len(valid_mask)}")
+print(f"After removing NaN targets: {len(y)}")
+print(f"Removed {(~valid_mask).sum()} samples with NaN targets")
+# ===========================================================
+
 # Mapping labels for classes
 unique_values = sorted(set(y))
-num_classes=int(len(unique_values))
+num_classes = int(len(unique_values))
 value_map = {unique_values[i]: i for i in range(len(unique_values))}
 y = [value_map[val] for val in y]
 y = np.array(y)
@@ -52,6 +65,8 @@ n_cont_features = X.shape[1]
 tab_latent_size = n_cont_features + 4
 USE_CUDA = torch.cuda.is_available()
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# ... rest of your code continues unchanged ...
 
 # Load FashionMNIST
 fashionmnist_dataset = datasets.FashionMNIST(
