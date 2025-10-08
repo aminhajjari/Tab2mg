@@ -76,15 +76,14 @@ DATA_DIR = '/project/def-arashmoh/shahab33/Msc/datasets'
 fashionmnist_dataset = datasets.FashionMNIST(
     root=DATA_DIR,
     train=True,
-    download=False,  # Changed to False
+    download=False,  # <-- Make sure this is False
     transform=transforms.ToTensor()
 )
 
-# Load MNIST (download=False since already downloaded)
 mnist_dataset = datasets.MNIST(
     root=DATA_DIR,
     train=True,
-    download=False,  # Changed to False
+    download=False,  # <-- Make sure this is False
     transform=transforms.ToTensor()
 )
 
