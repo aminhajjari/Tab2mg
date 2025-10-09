@@ -14,12 +14,59 @@ from torchvision import datasets, transforms
 import itertools
 import argparse
 import os
-from sklearn.impute import SimpleImputer
+from scipy.io import arff
 # Argument parser
 parser = argparse.ArgumentParser(description="Welcome to Table2Image")
 parser.add_argument('--csv', type=str, required=True, help='Path to the dataset (csv)')
 parser.add_argument('--save_dir', type=str, required=True, help='Path to save the final model')
 args = parser.parse_args()
+import os
+import pandas as pd
+from scipy.io import arff
+
+# Automatically convert any dataset to CSV
+def convert_to_csv(input_path):
+    ext = os.path.splitext(input_path)[-1].lower()
+    output_csv = os.path.splitext(input_path)[0] + '.csv'
+
+    if ext == '.csv':
+        print(f"[INFO] CSV file detected: {input_path}")
+        return input_path
+
+    elif ext in ['.arff']:
+        print(f"[INFO] Converting ARFF file to CSV: {input_path}")
+        data, meta = arff.loadarff(input_path)
+        df = pd.DataFrame(data)
+        # Decode byte columns (common in ARFF)
+        for col in df.columns:
+            if df[col].dtype == object:
+                try:
+                    df[col] = df[col].str.decode('utf-8')
+                except Exception:
+                    pass
+        df.to_csv(output_csv, index=False)
+        print(f"[INFO] Converted and saved as: {output_csv}")
+        return output_csv
+
+    elif ext in ['.xlsx', '.xls']:
+        print(f"[INFO] Converting Excel file to CSV: {input_path}")
+        df = pd.read_excel(input_path)
+        df.to_csv(output_csv, index=False)
+        print(f"[INFO] Converted and saved as: {output_csv}")
+        return output_csv
+
+    elif ext in ['.tsv', '.txt']:
+        print(f"[INFO] Converting TSV/TXT file to CSV: {input_path}")
+        df = pd.read_csv(input_path, sep='\t')
+        df.to_csv(output_csv, index=False)
+        print(f"[INFO] Converted and saved as: {output_csv}")
+        return output_csv
+
+    else:
+        raise ValueError(f"[ERROR] Unsupported file format: {ext}")
+
+# Run the conversion automatically
+args.csv = convert_to_csv(args.csv)
 
 # Parameters
 EPOCH = 50
@@ -32,7 +79,7 @@ saving_path = args.save_dir + '.pt'
 # Load and preprocess the tabular data
 df = pd.read_csv(csv_path)
 target_col_candidates = ['target', 'class', 'outcome', 'Class', 'binaryClass', 'status', 'Target', 'TR', 'speaker', 'Home/Away', 'Outcome', 'Leaving_Certificate', 'technology', 'signal', 'label', 'Label', 'click', 'percent_pell_grant', 'Survival']
-target_col = next((col for col in df.columns if col.lower() in [c.lower() for c in target_col_candidates]), None)
+target_col = next((col for col in df.columns if col.lower() in target_col_candidates), None)
 
 if target_col == None:
     X = df.iloc[:, :-1].values
@@ -41,22 +88,9 @@ else:
     y = df.loc[:, target_col].values
     X = df.drop(target_col, axis=1).values
 
-# ===== FIX: Remove samples with NaN in target variable =====
-# Create a mask for valid (non-NaN) target values
-valid_mask = ~pd.isna(y)
-
-# Filter both X and y to keep only valid samples
-X = X[valid_mask]
-y = y[valid_mask]
-
-print(f"Original dataset size: {len(valid_mask)}")
-print(f"After removing NaN targets: {len(y)}")
-print(f"Removed {(~valid_mask).sum()} samples with NaN targets")
-# ===========================================================
-
 # Mapping labels for classes
 unique_values = sorted(set(y))
-num_classes = int(len(unique_values))
+num_classes=int(len(unique_values))
 value_map = {unique_values[i]: i for i in range(len(unique_values))}
 y = [value_map[val] for val in y]
 y = np.array(y)
@@ -66,24 +100,19 @@ tab_latent_size = n_cont_features + 4
 USE_CUDA = torch.cuda.is_available()
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# ... rest of your code continues unchanged ...
-
 # Load FashionMNIST
-# Define data directory where datasets are already downloaded
-DATA_DIR = '/project/def-arashmoh/shahab33/Msc/datasets'
-
-# Load FashionMNIST (download=False since already downloaded)
 fashionmnist_dataset = datasets.FashionMNIST(
-    root=DATA_DIR,
+    root='.',
     train=True,
-    download=False,  # <-- Make sure this is False
+    download=True,
     transform=transforms.ToTensor()
 )
 
+# Load MNIST
 mnist_dataset = datasets.MNIST(
-    root=DATA_DIR,
+    root='.',
     train=True,
-    download=False,  # <-- Make sure this is False
+    download=True,
     transform=transforms.ToTensor()
 )
 
@@ -114,31 +143,14 @@ modified_mnist_dataset = ModifiedLabelDataset(mnist_dataset, label_offset=10)
 # mnist_indices = [i for i, (_, label) in enumerate(mnist_dataset) if label in range(10)]
 # filtered_mnist = Subset(mnist_dataset, mnist_indices)
 
-###
-
-# 1. Split data into training and test sets FIRST
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-
-# 2. Handle NaN values using SimpleImputer
-# We will use the 'mean' strategy here. You can change it to 'median' if your data is skewed.
-imputer = SimpleImputer(strategy='mean')
-
-# Fit on the training data and transform it
-X_train = imputer.fit_transform(X_train)
-
-# Transform the test data using the imputer fitted on the training data
-X_test = imputer.transform(X_test)
 
 
-# 3. Normalize tabular features AFTER imputation
+# Normalize tabular features
 scaler = StandardScaler()
+X = scaler.fit_transform(X)
 
-# Fit on the training data and transform it
-X_train = scaler.fit_transform(X_train)
-
-# Transform the test data using the scaler fitted on the training data
-X_test = scaler.transform(X_test)
-##
+# Split tabular data into train and test sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
 # Create TensorDatasets
 train_tabular_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.long))
@@ -598,3 +610,12 @@ for epoch in range(1, EPOCH + 1):
     best_accuracy, best_auc, best_epoch = test(cvae, test_synchronized_loader, epoch, best_accuracy, best_auc, best_epoch, best_model_path=saving_path)
 
 print(f'Best model image classification accuracy: {best_accuracy:.4f} at epoch: {best_epoch}, Best AUC: {best_auc:.4f}')
+
+
+
+
+
+
+
+
+
