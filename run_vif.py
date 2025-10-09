@@ -3,8 +3,6 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import LabelEncoder
-from sklearn.impute import SimpleImputer
 import matplotlib.pyplot as plt
 import torch
 from torch import nn, optim
@@ -16,7 +14,6 @@ from torchvision import datasets, transforms
 import itertools
 import argparse
 import os
-from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 # Argument parser
 parser = argparse.ArgumentParser(description="Welcome to Table2Image")
@@ -32,102 +29,56 @@ csv_path = args.csv
 file_name = os.path.basename(csv_path).replace('.csv', '')
 saving_path = args.save_dir + '.pt'
 
-# Load the tabular data
+# --- Load and preprocess the tabular data ---
 df = pd.read_csv(csv_path)
-target_col_candidates = ['target', 'class', 'outcome', 'Class', 'binaryClass', 'status', 'Target', 'TR', 'speaker', 'Home/Away', 'Outcome', 'Leaving_Certificate', 'technology', 'signal', 'label', 'Label', 'click', 'percent_pell_grant', 'Survival']
-target_col = next((col for col in df.columns if col.lower() in target_col_candidates), None)
 
-if target_col == None:
-    y_raw = df.iloc[:, -1].values
-    X_df = df.iloc[:, :-1]
+# Automatically detect the target column
+target_col_candidates = [
+    'target', 'class', 'outcome', 'Class', 'binaryClass', 'status', 'Target',
+    'TR', 'speaker', 'Home/Away', 'Outcome', 'Leaving_Certificate', 'technology',
+    'signal', 'label', 'Label', 'click', 'percent_pell_grant', 'Survival',
+    'diagnosis'  # added for breast cancer dataset
+]
+
+target_col = next((col for col in df.columns if col in target_col_candidates), None)
+
+if target_col is None:
+    # If no known target found, assume last column is the label
+    target_col = df.columns[-1]
+    print(f"[INFO] Using last column '{target_col}' as target.")
+
+# Handle non-numeric target labels (e.g., benign/malignant or strings like '20')
+if df[target_col].dtype == 'object' or not np.issubdtype(df[target_col].dtype, np.number):
+    print(f"[INFO] Converting string labels in '{target_col}' to integers...")
+    from sklearn.preprocessing import LabelEncoder
+    le = LabelEncoder()
+    y = le.fit_transform(df[target_col].astype(str))  # ensure all are strings first
+    unique_values = le.classes_.tolist()
 else:
-    y_raw = df.loc[:, target_col].values
-    X_df = df.drop(target_col, axis=1)
+    y = df[target_col].astype(int).values  # safely convert numeric strings like '20' to int
+    unique_values = sorted(set(y))
 
-# ==============================================================================
-# START ADDED PREPROCESSING AND VIF CALCULATION FLOW
-# ==============================================================================
+num_classes = len(unique_values)
+print(f"[INFO] Detected {num_classes} unique classes: {unique_values}")
 
-# Identify feature types
-categorical_cols = X_df.select_dtypes(include=['object', 'category']).columns
-numerical_cols = X_df.select_dtypes(include=['int64', 'float64']).columns
+# Drop target to get features
+X = df.drop(columns=[target_col]).values
 
-# 1. Imputation and Categorical Encoding
-# Impute numerical features with the median and categorical with the mode
-imputer_num = SimpleImputer(strategy='median')
-X_df[numerical_cols] = imputer_num.fit_transform(X_df[numerical_cols])
+# Ensure all features are numeric
+X = pd.DataFrame(X).apply(pd.to_numeric, errors='coerce').fillna(0).values
 
-# Convert categorical features to codes (or use One-Hot Encoding for better results, but codes are faster/simpler)
-for col in categorical_cols:
-    X_df[col] = X_df[col].astype('category').cat.codes
 
-# All features are now numeric
-X = X_df.values
-
-# 2. Map Raw Labels to 0-N
-unique_values = sorted(set(y_raw))
-num_classes = int(len(unique_values))
+# Mapping labels for classes
+unique_values = sorted(set(y))
+num_classes=int(len(unique_values))
 value_map = {unique_values[i]: i for i in range(len(unique_values))}
-y = np.array([value_map[val] for val in y_raw])
+y = [value_map[val] for val in y]
+y = np.array(y)
 
 n_cont_features = X.shape[1]
 tab_latent_size = n_cont_features + 4
 USE_CUDA = torch.cuda.is_available()
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-# 3. Split Data (Before final scaling to prevent data leakage)
-X_train_raw, X_test_raw, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-
-# 4. Normalize tabular features (using StandardScaler)
-scaler = StandardScaler()
-X_train = scaler.fit_transform(X_train_raw)
-X_test = scaler.transform(X_test_raw)
-
-# 5. Calculate VIF Vector on Scaled Training Data (Static Calculation)
-# Function to safely calculate VIF vector (moved and simplified from inside the model)
-def calculate_vif_vector(X_data):
-    """Calculates VIF for each feature in the training set once."""
-    X_df = pd.DataFrame(X_data)
-    vif_vector = []
-    # Use a safe implementation to handle singular matrices/constant columns
-    for i in range(X_df.shape[1]):
-        try:
-            # Statsmodels requires an intercept column for correct VIF calculation
-            X_temp = X_df.drop(X_df.columns[i], axis=1)
-            # Check for constant columns after dropping feature
-            if (X_temp.nunique() < 2).any():
-                vif = 9999.0 # Effectively singular matrix
-            else:
-                from statsmodels.api import add_constant
-                X_const = add_constant(X_temp, prepend=True, has_constant='add')
-                vif = variance_inflation_factor(X_const.values, 0)
-        except Exception:
-            vif = 9999.0 # Catch all errors related to matrix singularity
-        
-        # NOTE: VIF logic is simplified here; the actual VIF for the *i-th* feature
-        # should be calculated by regressing it against *all other* features.
-        # However, for demonstration, we use the original VIF code structure's intent.
-        vif = variance_inflation_factor(X_df.values, i) # Using the simpler, faster method for initial array
-        vif_vector.append(vif)
-    
-    return np.array(vif_vector)
-
-# Get the static VIF vector (used for VIFInitialization module)
-vif_vector = calculate_vif_vector(X_train) 
-# Convert back to Tensor and move to device later, inside the model init
-vif_vector_tensor = torch.tensor(vif_vector, dtype=torch.float32).to(DEVICE)
-
-
-# The input to VIFInitialization must be changed to use this static vector.
-# This requires a small change inside the VIFInitialization class below (done).
-
-# Overwrite X_train/X_test with the scaled arrays for the rest of the script
-X = np.concatenate([X_train, X_test], axis=0) # not strictly used, but matching original intent
-
-# ==============================================================================
-# END ADDED PREPROCESSING AND VIF CALCULATION FLOW
-# ==============================================================================
-
 
 # Load FashionMNIST
 fashionmnist_dataset = datasets.FashionMNIST(
@@ -160,7 +111,28 @@ class ModifiedLabelDataset(Dataset):
 
 modified_mnist_dataset = ModifiedLabelDataset(mnist_dataset, label_offset=10)
 
-# Create TensorDatasets using the scaled X_train and X_test
+# # Combine labels for FashionMNIST (0~9) and MNIST (10~19)
+# selected_labels_fashion = list(range(10))
+# selected_labels_mnist = list(range(10, 20))
+
+# # Filter FashionMNIST dataset
+# fashion_indices = [i for i, (_, label) in enumerate(fashionmnist_dataset) if label in selected_labels_fashion]
+# filtered_fashion = Subset(fashionmnist_dataset, fashion_indices)
+
+# # Filter MNIST dataset and remap labels
+# mnist_indices = [i for i, (_, label) in enumerate(mnist_dataset) if label in range(10)]
+# filtered_mnist = Subset(mnist_dataset, mnist_indices)
+
+
+
+# Normalize tabular features
+scaler = StandardScaler()
+X = scaler.fit_transform(X)
+
+# Split tabular data into train and test sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+# Create TensorDatasets
 train_tabular_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.long))
 test_tabular_dataset = TensorDataset(torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test, dtype=torch.long))
 
@@ -184,6 +156,7 @@ filtered_mnist = Subset(modified_mnist_dataset,
                         [i for i, (_, label) in enumerate(modified_mnist_dataset) if label in valid_labels])
 
 
+
 # Combine FashionMNIST and MNIST
 combined_dataset = ConcatDataset([filtered_fashion, filtered_mnist])
 
@@ -192,7 +165,7 @@ indices_by_label = {label: [] for label in range(int(len(unique_values)))}
 
 for i, (_, label) in enumerate(combined_dataset):
     if label not in indices_by_label:
-        print(f"Unexpected label {label} at index {i}")
+        print(f"Unexpected label {label} at index {i}")  # 잘못된 라벨 출력
     indices_by_label[label].append(i)
 
 
@@ -202,6 +175,8 @@ repeated_indices = {
                                  num_samples_needed[label] + num_samples_needed_test[label]))
     for label in indices_by_label
 }
+
+
 
 # Align the train and test indices for both tabular and image datasets by label
 aligned_train_indices = []
@@ -274,12 +249,83 @@ class SimpleCNN(nn.Module):
         x = self.fc2(x)
         return x
 
+
+
+d_embedding = 24
+# m_cont_embeddings = PeriodicEmbeddings(n_cont_features, lite=False)
+
+# Compute bins
+# Using quantile-based bins
+# quantile_bins = compute_bins(X_train_tabular_tensor)
+
+# # Using target-aware tree-based bins
+# tree_bins = compute_bins(
+#     X_train_tabular_tensor,
+#     tree_kwargs={'min_samples_leaf': 64, 'min_impurity_decrease': 1e-4},
+#     y=y_train_tabular_tensor,
+#     regression=True,
+# )
+
+# # Define MLP-Q / MLP-T model
+# mlp_config = {
+#     'd_out': tab_latent_size,  # For example, a single regression task.
+#     'n_blocks': 2,
+#     'd_block': 256,
+#     'dropout': 0.1,
+# }
+
+# model_with_embeddings = nn.Sequential(
+#     m_cont_embeddings,
+#     nn.Flatten(),
+#     MLP(d_in=n_cont_features * d_embedding, **mlp_config)
+# )
+
 class SimpleMLP(nn.Module):
     def __init__(self, tab_latent_size = tab_latent_size):
         super(SimpleMLP, self).__init__()
         self.fc1 = nn.Linear(n_cont_features, tab_latent_size)  # Input layer to hidden layer (12 neurons)
         self.fc2 = nn.Linear(tab_latent_size, int(len(unique_values)))  # Hidden layer to output layer
-        self.relu = nn.ReLU()  # ReLU activation function
+        self.relu = nn.ReLU()        # ReLU activation function
+
+    def forward(self, x):
+        tab_latent = self.relu(self.fc1(x))
+        x = self.fc2(tab_latent)
+        return tab_latent, torch.sigmoid(x)  # Sigmoid activation for binary classification
+
+model_with_embeddings = SimpleMLP(tab_latent_size)
+
+# mlp_q_model = nn.Sequential(
+#     PiecewiseLinearEncoding(quantile_bins),
+#     nn.Flatten(),
+#     MLP(d_in=sum(len(b) - 1 for b in quantile_bins), **mlp_config)
+# )
+
+# mlp_t_model = nn.Sequential(
+#     PiecewiseLinearEncoding(tree_bins),
+#     nn.Flatten(),
+#     MLP(d_in=sum(len(b) - 1 for b in tree_bins), **mlp_config)
+# )
+
+# # Define MLP-QLR / MLP-TLR model
+# mlp_qlr_model = nn.Sequential(
+#     PiecewiseLinearEmbeddings(quantile_bins, d_embedding, activation=True),
+#     nn.Flatten(),
+#     MLP(d_in=n_cont_features * d_embedding, **mlp_config)
+# )
+
+# mlp_tlr_model = nn.Sequential(
+#     PiecewiseLinearEmbeddings(tree_bins, d_embedding, activation=True),
+#     nn.Flatten(),
+#     MLP(d_in=n_cont_features * d_embedding, **mlp_config)
+# )
+
+
+class SimpleMLP(nn.Module):
+    def __init__(self, tab_latent_size = tab_latent_size):
+        super(SimpleMLP, self).__init__()
+        self.fc1 = nn.Linear(n_cont_features, tab_latent_size)  # Input layer to hidden layer (12 neurons)
+        self.fc2 = nn.Linear(tab_latent_size, int(len(unique_values)))  # Hidden layer to output layer
+        self.relu = nn.ReLU()        # ReLU activation function
 
     def forward(self, x):
         tab_latent = self.relu(self.fc1(x))
@@ -289,34 +335,40 @@ class SimpleMLP(nn.Module):
 model_with_embeddings = SimpleMLP(tab_latent_size)
 
 
+import torch
+import torch.nn as nn
+import numpy as np
+import pandas as pd
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+# VIF Embedding
+def calculate_vif(df):
+    df = pd.DataFrame(df)
+    vif_data = pd.DataFrame()
+    vif_data["feature"] = df.columns
+    vif_data["VIF"] = [variance_inflation_factor(df.values, i) for i in range(df.shape[1])]
+    return vif_data
+
 class VIFInitialization(nn.Module):
-    def __init__(self, input_dim, vif_values_tensor):
+    def __init__(self, input_dim, vif_values):
         super(VIFInitialization, self).__init__()
         
         # VIF-based init
         self.input_dim = input_dim
+        self.vif_values = vif_values
         self.relu = nn.ReLU()
         self.fc1 = nn.Linear(input_dim, input_dim + 4)
         self.fc2 = nn.Linear(input_dim + 4, input_dim)
         
-        self.initialize_weights(vif_values_tensor)
+        self.initialize_weights()
 
-    def initialize_weights(self, vif_values_tensor):
+    def initialize_weights(self):
         # fc1 weight init
         with torch.no_grad():
-            # Apply VIF-based scaling to initial weights
-            # Clamp VIF to a reasonable max (e.g., 1000) to prevent 1/VIF from becoming 0
-            vif_clamped = torch.clamp(vif_values_tensor, min=1.0, max=1000.0)
-            inv_vif = 1.0 / vif_clamped
-            
-            # Use Xavier/Kaiming init first
-            nn.init.kaiming_uniform_(self.fc1.weight)
-            
-            # Apply scaling row-wise (one VIF value per input feature)
-            # The scaling is applied to the weights of the input dimension
+            vif_tensor = torch.tensor(self.vif_values, dtype=torch.float32)
+            inv_vif = 1 / vif_tensor  # reciprocal of vif values
             for i in range(self.input_dim):
-                # Scale all weights connected to the i-th input feature
-                self.fc1.weight.data[:, i] *= inv_vif[i]
+                self.fc1.weight.data[i, :] = inv_vif[i] / (self.input_dim + 4)
             
             # fc2 weight init (default xavier init)
             nn.init.xavier_uniform_(self.fc2.weight)
@@ -328,56 +380,60 @@ class VIFInitialization(nn.Module):
 
 
 class CVAEWithTabEmbedding(nn.Module):
-    def __init__(self, tab_latent_size=8, latent_size=8, n_features=n_cont_features, vif_vector_tensor=vif_vector_tensor):
+    def __init__(self, tab_latent_size=8, latent_size=8):
         super(CVAEWithTabEmbedding, self).__init__()
         
-        self.mlp = SimpleMLP(tab_latent_size)
-        
-        # Instantiate VIFInitialization ONCE with the static VIF vector
-        self.vif_model = VIFInitialization(n_features, vif_vector_tensor).to(DEVICE)
+        self.mlp = model_with_embeddings
         
         self.encoder = nn.Sequential(
-            nn.Linear(28*28 + tab_latent_size + n_features, 128),
+            nn.Linear(28*28 + tab_latent_size + n_cont_features, 128),
+#             nn.Linear(tab_latent_size, 128),
             nn.ReLU(),
             nn.Linear(128, latent_size)
         )
         
         self.decoder = nn.Sequential(
-            nn.Linear(latent_size + tab_latent_size + n_features, 128),
+            nn.Linear(latent_size + tab_latent_size + n_cont_features, 128),
             nn.ReLU(),
             nn.Linear(128, 28*28),
             nn.Sigmoid()
         )
         
-        self.final_classifier = SimpleCNN(num_classes=int(len(unique_values)))
+#         self.tab_classifier = nn.Linear(tab_latent_size, int(len(unique_values)))
+        self.final_classifier = SimpleCNN(num_classes=int(len(unique_values)))  # Custom ResNet-based classifier for images
 
     def encode(self, x, tab_embedding, vif_embedding):
         return self.encoder(torch.cat([x, tab_embedding, vif_embedding], dim=1))
+#         return self.encoder(tab_embedding)
     
     def decode(self, z, tab_embedding, vif_embedding):
         return self.decoder(torch.cat([z, tab_embedding, vif_embedding], dim=1))
-        
+    
     def forward(self, x, tab_data):
-        # VIF embedding is generated using the static VIF model
-        vif_embedding = self.vif_model(tab_data)
+        vif_df = calculate_vif(tab_data.detach().cpu().numpy())
+        vif_values = vif_df['VIF'].values
+        input_dim = tab_data.shape[1]
+        vif_model = VIFInitialization(input_dim, vif_values).to(DEVICE)
+        vif_embedding = vif_model(tab_data)
         
-        tab_embedding, tab_pred_raw = self.mlp(tab_data)
-        tab_pred = tab_pred_raw # keep for compatibility with sigmoid in loss
-        
+        tab_embedding, tab_pred = self.mlp(tab_data)
         z = self.encode(x, tab_embedding, vif_embedding)
         recon_x = self.decode(z, tab_embedding, vif_embedding)
-        img_pred = self.final_classifier(recon_x.view(-1, 1, 28, 28))
+#         tab_pred = tab_embedding
+#         tab_pred = self.tab_classifier(tab_embedding)
+        img_pred = self.final_classifier(recon_x.view(-1, 1, 28, 28))  # Reshape recon_x for CNN input
         return recon_x, tab_pred, img_pred
 
 
 cvae = CVAEWithTabEmbedding(tab_latent_size).to(DEVICE)
 optimizer = optim.AdamW(cvae.parameters(), lr=0.001)
+# scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)  # Decay LR by a factor of 0.1 every 10 epochs
 
 
 def loss_function(recon_x, x, tab_pred, tab_labels, img_pred, img_labels):
-    BCE = F.mse_loss(recon_x, x)
-    tab_loss = F.cross_entropy(tab_pred, tab_labels.long()) 
-    img_loss = F.cross_entropy(img_pred, img_labels.long())
+    BCE = F.mse_loss(recon_x, x)  # Reconstruction loss
+    tab_loss = F.cross_entropy(tab_pred, tab_labels)  # Use BCE for multi-label target
+    img_loss = F.cross_entropy(img_pred, img_labels)
     return BCE + tab_loss + img_loss
 
 
@@ -393,25 +449,33 @@ def train(model, train_data_loader, optimizer, epoch):
         img_label = img_label.to(DEVICE)
         tab_label = tab_label.to(DEVICE).float()
         
+
+        
         optimizer.zero_grad()
         
         random_array = np.random.rand(img_data.shape[0], 28*28)
         x_rand = torch.Tensor(random_array).to(DEVICE)
         
         recon_x, tab_pred, img_pred = model(x_rand, tab_data)
-        
-        # NOTE: Your original loss function expects tab_pred and img_pred 
-        # to be logits, but your MLP outputs sigmoid for binary.
-        # This is a major incompatibility, but kept to avoid changing loss/test logic too much.
-        # We will assume a multi-class case in loss/test for simplicity (using long labels).
         tab_pred = tab_pred.squeeze(-1).float()
         img_pred = img_pred.squeeze(-1).float()
+
+#         tab_label = F.one_hot(tab_label.long(), num_classes=num_classes).float()
+#         img_label = F.one_hot(img_label.long(), num_classes=num_classes).float()
+
+        
+#         print(f"tab_pred shape: {tab_pred}, dtype: {tab_pred.dtype}")
+#         print(f"tab_label shape: {tab_label}, dtype: {tab_label.dtype}")
+#         print(f"img_pred shape: {img_pred}, dtype: {img_pred.dtype}")
+#         print(f"img_label shape: {img_label}, dtype: {img_label.dtype}")
 
         loss = loss_function(recon_x, img_data, tab_pred, tab_label, img_pred, img_label)
         loss.backward()
         train_loss += loss.item()
         optimizer.step()
         
+#     print(f'====> Epoch: {epoch} Average loss: {train_loss / len(train_data_loader):.4f}')
+#     scheduler.step()
 
 import torch
 import numpy as np
@@ -423,7 +487,7 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
     correct_tab_total = 0
     correct_img_total = 0
     total = 0
-    num_classes = int(len(unique_values))
+    num_classes = int(len(unique_values))  # Adjust this for your actual number of classes
     correct_tab = {i: 0 for i in range(num_classes)}
     total_tab = {i: 0 for i in range(num_classes)}
     correct_img = {i: 0 for i in range(num_classes)}
@@ -446,30 +510,49 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
             
             recon_x, tab_pred, img_pred = model(x_rand, tab_data)
             
+            # Squeeze the last dimension if it's of size 1 (e.g., for binary classification)
             tab_pred = tab_pred.squeeze(-1).float()
             img_pred = img_pred.squeeze(-1).float()
 
+            # Convert labels to float (not long, as per your request)
+#             tab_label = F.one_hot(tab_label.long(), num_classes=num_classes).float()
+#             img_label = F.one_hot(img_label.long(), num_classes=num_classes).float()
+            
             test_loss += loss_function(recon_x, img_data, tab_pred, tab_label, img_pred, img_label).item()
             
-            # AUC Preds/Labels Prep
+            # Store predictions and labels for AUC calculation
             all_tab_labels.extend(tab_label.cpu().numpy())
-            all_tab_preds.extend(tab_pred.cpu().numpy())
+            all_tab_preds.extend(tab_pred.cpu().numpy())  # Probabilities for each class
             all_img_labels.extend(img_label.cpu().numpy())
-            all_img_preds.extend(img_pred.cpu().numpy())
+            all_img_preds.extend(img_pred.cpu().numpy())  # Probabilities for each class
 
-            # Accuracy Calculation (using long labels for prediction comparison)
-            if tab_pred.dim() == 1:
-                tab_predicted = (tab_pred > 0.5).long()
-                img_predicted = (img_pred > 0.5).long()
-            else:
+            # Handle binary or multi-class cases
+            if tab_pred.dim() == 1:  # Binary case (single output per sample)
+                tab_predicted = (tab_pred > 0.5).long()  # Use a threshold for binary classification
+            else:  # Multi-class case (probabilities for each class)
                 tab_predicted = torch.argmax(tab_pred, dim=1)
+            
+            for i in range(len(tab_label)):
+                label = torch.argmax(tab_label[i]).item()  # Convert one-hot to class index
+                correct_tab[label] += (tab_predicted[i] == label).item()
+                total_tab[label] += 1
+
+            # Calculate accuracy for image classification
+            if img_pred.dim() == 1:  # Binary classification for images
+                img_predicted = (img_pred > 0.5).long()  # Use a threshold for binary classification
+            else:  # Multi-class case (probabilities for each class)
                 img_predicted = torch.argmax(img_pred, dim=1)
             
-            # The original code's accuracy logic is problematic. Simplified here:
-            tab_label_indices = tab_label.long() # Assuming Long Tensor of indices
-            img_label_indices = img_label.long() # Assuming Long Tensor of indices
-
+            for i in range(len(img_label)):
+                label = torch.argmax(img_label[i]).item()  # Convert one-hot to class index
+                correct_img[label] += (img_predicted[i] == label).item()
+                total_img[label] += 1
+                
+            tab_label_indices = tab_label
+#             tab_label_indices = torch.argmax(tab_label, dim=1)  # Convert one-hot encoded labels back to indices
             correct_tab_total += (tab_predicted == tab_label_indices).sum().item()
+            img_label_indices = img_label
+#             img_label_indices = torch.argmax(img_label, dim=1)
             correct_img_total += (img_predicted == img_label_indices).sum().item()
 
             total += tab_label.size(0)
@@ -477,27 +560,14 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
     test_loss /= len(test_data_loader)
     tab_accuracy_total = 100 * correct_tab_total / total
     img_accuracy_total = 100 * correct_img_total / total
+    tab_accuracy = {cls: (correct_tab[cls] / total_tab[cls]) * 100 if total_tab[cls] > 0 else 0 for cls in range(num_classes)}
+    img_accuracy = {cls: (correct_img[cls] / total_img[cls]) * 100 if total_img[cls] > 0 else 0 for cls in range(num_classes)}
 
-    # Only calculate AUC if there are at least two classes
-    if num_classes > 1:
-        # Flatten predictions for AUC calculation (assuming multi-class logits for simplicity)
-        all_tab_labels_np = np.array(all_tab_labels)
-        all_tab_preds_np = np.array(all_tab_preds)
-        all_img_labels_np = np.array(all_img_labels)
-        all_img_preds_np = np.array(all_img_preds)
-        
-        # Ensure predictions are probability-like for AUC
-        if all_tab_preds_np.ndim == 1 and num_classes == 2:
-            tab_auc = roc_auc_score(all_tab_labels_np, all_tab_preds_np)
-            img_auc = roc_auc_score(all_img_labels_np, all_img_preds_np)
-        elif all_tab_preds_np.ndim > 1:
-            tab_auc = roc_auc_score(all_tab_labels_np, all_tab_preds_np, multi_class="ovr", average="macro")
-            img_auc = roc_auc_score(all_img_labels_np, all_img_preds_np, multi_class="ovr", average="macro")
-        else:
-            tab_auc, img_auc = 0.0, 0.0
-    else:
-        tab_auc, img_auc = 0.0, 0.0
-
+    # Calculate AUC for tabular and image classification
+    print(len(all_tab_labels))
+    print(len(all_tab_preds))
+    tab_auc = roc_auc_score(all_tab_labels, all_tab_preds, multi_class="ovr", average="macro")
+    img_auc = roc_auc_score(all_img_labels, all_img_preds, multi_class="ovr", average="macro")
 
     # Save the best model based on image classification accuracy
     if img_accuracy_total > best_accuracy:
@@ -520,3 +590,12 @@ for epoch in range(1, EPOCH + 1):
     best_accuracy, best_auc, best_epoch = test(cvae, test_synchronized_loader, epoch, best_accuracy, best_auc, best_epoch, best_model_path=saving_path)
 
 print(f'Best model image classification accuracy: {best_accuracy:.4f} at epoch: {best_epoch}, Best AUC: {best_auc:.4f}')
+
+
+
+
+
+
+
+
+
