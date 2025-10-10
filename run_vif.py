@@ -81,21 +81,23 @@ USE_CUDA = torch.cuda.is_available()
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Load FashionMNIST
+DATASET_ROOT = '/project/def-arashmoh/shahab33/Msc/datasets'
+
+# Load FashionMNIST
 fashionmnist_dataset = datasets.FashionMNIST(
-    root='.',
+    root=DATASET_ROOT,
     train=True,
-    download=True,
+    download=False,
     transform=transforms.ToTensor()
 )
 
 # Load MNIST
 mnist_dataset = datasets.MNIST(
-    root='.',
+    root=DATASET_ROOT,
     train=True,
-    download=True,
+    download=False,
     transform=transforms.ToTensor()
 )
-
 # Target + 10 (MNIST)
 class ModifiedLabelDataset(Dataset):
     def __init__(self, dataset, label_offset=10):
