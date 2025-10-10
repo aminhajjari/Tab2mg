@@ -448,10 +448,8 @@ def train(model, train_data_loader, optimizer, epoch):
     for tab_data, tab_label, img_data, img_label in train_data_loader:
         img_data = img_data.view(-1, 28*28).to(DEVICE)
         tab_data = tab_data.to(DEVICE)
-        img_label = img_label.to(DEVICE)
-        tab_label = tab_label.to(DEVICE).float()
-        
-
+        img_label = img_label.to(DEVICE).long()  # ← Changed from .float()
+        tab_label = tab_label.to(DEVICE).long()  # ← Changed from .float()
         
         optimizer.zero_grad()
         
@@ -459,17 +457,9 @@ def train(model, train_data_loader, optimizer, epoch):
         x_rand = torch.Tensor(random_array).to(DEVICE)
         
         recon_x, tab_pred, img_pred = model(x_rand, tab_data)
-        tab_pred = tab_pred.squeeze(-1).float()
-        img_pred = img_pred.squeeze(-1).float()
-
-#         tab_label = F.one_hot(tab_label.long(), num_classes=num_classes).float()
-#         img_label = F.one_hot(img_label.long(), num_classes=num_classes).float()
-
-        
-#         print(f"tab_pred shape: {tab_pred}, dtype: {tab_pred.dtype}")
-#         print(f"tab_label shape: {tab_label}, dtype: {tab_label.dtype}")
-#         print(f"img_pred shape: {img_pred}, dtype: {img_pred.dtype}")
-#         print(f"img_label shape: {img_label}, dtype: {img_label.dtype}")
+        # Remove these lines - predictions should stay as is
+        # tab_pred = tab_pred.squeeze(-1).float()
+        # img_pred = img_pred.squeeze(-1).float()
 
         loss = loss_function(recon_x, img_data, tab_pred, tab_label, img_pred, img_label)
         loss.backward()
@@ -489,7 +479,7 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
     correct_tab_total = 0
     correct_img_total = 0
     total = 0
-    num_classes = int(len(unique_values))  # Adjust this for your actual number of classes
+    num_classes = int(len(unique_values))
     correct_tab = {i: 0 for i in range(num_classes)}
     total_tab = {i: 0 for i in range(num_classes)}
     correct_img = {i: 0 for i in range(num_classes)}
@@ -504,59 +494,47 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
         for tab_data, tab_label, img_data, img_label in test_data_loader:
             img_data = img_data.view(-1, 28*28).to(DEVICE)
             tab_data = tab_data.to(DEVICE)
-            img_label = img_label.to(DEVICE)
-            tab_label = tab_label.to(DEVICE).float()
+            img_label = img_label.to(DEVICE).long()  # ← Changed from .float()
+            tab_label = tab_label.to(DEVICE).long()  # ← Changed from .float()
             
             random_array = np.random.rand(img_data.shape[0], 28*28)
             x_rand = torch.Tensor(random_array).view(-1, 28*28).to(DEVICE)
             
             recon_x, tab_pred, img_pred = model(x_rand, tab_data)
             
-            # Squeeze the last dimension if it's of size 1 (e.g., for binary classification)
-            tab_pred = tab_pred.squeeze(-1).float()
-            img_pred = img_pred.squeeze(-1).float()
-
-            # Convert labels to float (not long, as per your request)
-#             tab_label = F.one_hot(tab_label.long(), num_classes=num_classes).float()
-#             img_label = F.one_hot(img_label.long(), num_classes=num_classes).float()
+            # Remove these squeeze lines - not needed for cross_entropy
+            # tab_pred = tab_pred.squeeze(-1).float()
+            # img_pred = img_pred.squeeze(-1).float()
             
             test_loss += loss_function(recon_x, img_data, tab_pred, tab_label, img_pred, img_label).item()
             
+            # For AUC, use softmax probabilities
+            tab_probs = F.softmax(tab_pred, dim=1)
+            img_probs = F.softmax(img_pred, dim=1)
+            
             # Store predictions and labels for AUC calculation
             all_tab_labels.extend(tab_label.cpu().numpy())
-            all_tab_preds.extend(tab_pred.cpu().numpy())  # Probabilities for each class
+            all_tab_preds.extend(tab_probs.cpu().numpy())
             all_img_labels.extend(img_label.cpu().numpy())
-            all_img_preds.extend(img_pred.cpu().numpy())  # Probabilities for each class
+            all_img_preds.extend(img_probs.cpu().numpy())
 
-            # Handle binary or multi-class cases
-            if tab_pred.dim() == 1:  # Binary case (single output per sample)
-                tab_predicted = (tab_pred > 0.5).long()  # Use a threshold for binary classification
-            else:  # Multi-class case (probabilities for each class)
-                tab_predicted = torch.argmax(tab_pred, dim=1)
+            # Get predicted classes
+            tab_predicted = torch.argmax(tab_pred, dim=1)
+            img_predicted = torch.argmax(img_pred, dim=1)
             
+            # Calculate per-class accuracy
             for i in range(len(tab_label)):
-                label = torch.argmax(tab_label[i]).item()  # Convert one-hot to class index
+                label = tab_label[i].item()
                 correct_tab[label] += (tab_predicted[i] == label).item()
                 total_tab[label] += 1
 
-            # Calculate accuracy for image classification
-            if img_pred.dim() == 1:  # Binary classification for images
-                img_predicted = (img_pred > 0.5).long()  # Use a threshold for binary classification
-            else:  # Multi-class case (probabilities for each class)
-                img_predicted = torch.argmax(img_pred, dim=1)
-            
             for i in range(len(img_label)):
-                label = torch.argmax(img_label[i]).item()  # Convert one-hot to class index
+                label = img_label[i].item()
                 correct_img[label] += (img_predicted[i] == label).item()
                 total_img[label] += 1
                 
-            tab_label_indices = tab_label
-#             tab_label_indices = torch.argmax(tab_label, dim=1)  # Convert one-hot encoded labels back to indices
-            correct_tab_total += (tab_predicted == tab_label_indices).sum().item()
-            img_label_indices = img_label
-#             img_label_indices = torch.argmax(img_label, dim=1)
-            correct_img_total += (img_predicted == img_label_indices).sum().item()
-
+            correct_tab_total += (tab_predicted == tab_label).sum().item()
+            correct_img_total += (img_predicted == img_label).sum().item()
             total += tab_label.size(0)
     
     test_loss /= len(test_data_loader)
@@ -566,8 +544,6 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
     img_accuracy = {cls: (correct_img[cls] / total_img[cls]) * 100 if total_img[cls] > 0 else 0 for cls in range(num_classes)}
 
     # Calculate AUC for tabular and image classification
-    print(len(all_tab_labels))
-    print(len(all_tab_preds))
     tab_auc = roc_auc_score(all_tab_labels, all_tab_preds, multi_class="ovr", average="macro")
     img_auc = roc_auc_score(all_img_labels, all_img_preds, multi_class="ovr", average="macro")
 
@@ -577,7 +553,6 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
         best_epoch = epoch
         torch.save(model.state_dict(), best_model_path)
         
-    # Compare AUC after calculation
     if img_auc > best_auc:
         best_auc = img_auc
 
