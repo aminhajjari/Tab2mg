@@ -282,17 +282,17 @@ d_embedding = 24
 #     MLP(d_in=n_cont_features * d_embedding, **mlp_config)
 # )
 
-class SimpleMLP(nn.Module):
-    def __init__(self, tab_latent_size=tab_latent_size):
-        super(SimpleMLP, self).__init__()
-        self.fc1 = nn.Linear(n_cont_features, tab_latent_size)
-        self.fc2 = nn.Linear(tab_latent_size, int(len(unique_values)))
-        self.relu = nn.ReLU()
+#class SimpleMLP(nn.Module):
+    #def __init__(self, tab_latent_size=tab_latent_size):
+        #super(SimpleMLP, self).__init__()
+        #self.fc1 = nn.Linear(n_cont_features, tab_latent_size)
+        #self.fc2 = nn.Linear(tab_latent_size, int(len(unique_values)))
+        #self.relu = nn.ReLU()
 
-    def forward(self, x):
-        tab_latent = self.relu(self.fc1(x))
-        x = self.fc2(tab_latent)
-        return tab_latent, x  # ✅ Return raw logits
+    #def forward(self, x):
+        #tab_latent = self.relu(self.fc1(x))
+        #x = self.fc2(tab_latent)
+        #return tab_latent, x  # ✅ Return raw logits
 
 model_with_embeddings = SimpleMLP(tab_latent_size)
 
