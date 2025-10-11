@@ -294,7 +294,7 @@ d_embedding = 24
         #x = self.fc2(tab_latent)
         #return tab_latent, x  # ✅ Return raw logits
 
-model_with_embeddings = SimpleMLP(tab_latent_size)
+#model_with_embeddings = SimpleMLP(tab_latent_size)
 
 # mlp_q_model = nn.Sequential(
 #     PiecewiseLinearEncoding(quantile_bins),
