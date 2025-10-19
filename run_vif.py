@@ -15,6 +15,8 @@ import itertools
 import argparse
 import os
 
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+import warnings
 # Argument parser
 parser = argparse.ArgumentParser(description="Welcome to Table2Image")
 parser.add_argument('--csv', type=str, required=True, help='Path to the dataset (csv)')
@@ -122,22 +124,29 @@ test_tabular_dataset = TensorDataset(torch.tensor(X_test, dtype=torch.float32), 
 
 # ========== FIX 1: Calculate VIF once BEFORE model creation ==========
 print("[INFO] Calculating VIF values...")
-from statsmodels.stats.outliers_influence import variance_inflation_factor
+import warnings
 
 def calculate_vif_safe(X_data):
     """Calculate VIF with proper error handling"""
+    from statsmodels.stats.outliers_influence import variance_inflation_factor
+    
     df = pd.DataFrame(X_data)
+    n_features = df.shape[1]
     vif_values = []
     
-    for i in range(df.shape[1]):
-        try:
-            vif = variance_inflation_factor(df.values, i)
-            # Handle inf/nan
-            if np.isnan(vif) or np.isinf(vif):
+    # Suppress the warning that's causing the error message
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=RuntimeWarning)
+        
+        for i in range(n_features):
+            try:
+                vif = variance_inflation_factor(df.values, i)
+                # Handle invalid values
+                if np.isnan(vif) or np.isinf(vif):
+                    vif = 1.0
+            except:
                 vif = 1.0
-        except:
-            vif = 1.0
-        vif_values.append(vif)
+            vif_values.append(vif)
     
     vif_values = np.array(vif_values)
     # Clip to reasonable range
@@ -148,6 +157,8 @@ def calculate_vif_safe(X_data):
 X_sample = X_train[:min(1000, len(X_train))]
 vif_values = calculate_vif_safe(X_sample)
 print(f"[INFO] VIF values: min={vif_values.min():.2f}, max={vif_values.max():.2f}, mean={vif_values.mean():.2f}")
+
+# ========== THAT'S IT! ==========
 # ========== END FIX 1 ==========
 
 # Calculate number of samples needed for each label
