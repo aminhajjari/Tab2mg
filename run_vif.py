@@ -124,7 +124,7 @@ test_tabular_dataset = TensorDataset(torch.tensor(X_test, dtype=torch.float32), 
 
 # ========== FIX 1: Calculate VIF once BEFORE model creation ==========
 print("[INFO] Calculating VIF values...")
-import warnings
+
 
 def calculate_vif_safe(X_data):
     """Calculate VIF with proper error handling"""
