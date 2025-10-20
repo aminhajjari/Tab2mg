@@ -454,28 +454,56 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
     tab_accuracy = {cls: (correct_tab[cls] / total_tab[cls]) * 100 if total_tab[cls] > 0 else 0 for cls in range(num_classes)}
     img_accuracy = {cls: (correct_img[cls] / total_img[cls]) * 100 if total_img[cls] > 0 else 0 for cls in range(num_classes)}
 
-    # ========== FIX 5: Add NaN check before AUC calculation ==========
+    # ========== FIX 5: CORRECTED AUC calculation with proper error handling ==========
+    # Convert to numpy arrays
     all_tab_preds_arr = np.array(all_tab_preds)
     all_img_preds_arr = np.array(all_img_preds)
-    
+    all_tab_labels_arr = np.array(all_tab_labels)
+    all_img_labels_arr = np.array(all_img_labels)
+
+    # Check for NaN/Inf in tabular predictions
     if np.isnan(all_tab_preds_arr).any() or np.isinf(all_tab_preds_arr).any():
-        print(f"[WARNING] NaN/Inf in tab predictions at epoch {epoch}, setting AUC=0")
+        print(f"[ERROR] NaN/Inf detected in tab predictions at epoch {epoch}")
+        print(f"  Sample predictions: {all_tab_preds_arr[:5]}")
         tab_auc = 0.0
     else:
         try:
-            tab_auc = roc_auc_score(all_tab_labels, all_tab_preds, multi_class="ovr", average="macro")
-        except:
-            print(f"[WARNING] Error calculating tab AUC at epoch {epoch}")
+            # For binary classification with 2 classes
+            if num_classes == 2:
+                # Use probability of positive class (class 1)
+                tab_auc = roc_auc_score(all_tab_labels_arr, all_tab_preds_arr[:, 1])
+            else:
+                # For multi-class
+                tab_auc = roc_auc_score(all_tab_labels_arr, all_tab_preds_arr, 
+                                       multi_class="ovr", average="macro")
+        except Exception as e:
+            print(f"[ERROR] Tab AUC calculation failed at epoch {epoch}")
+            print(f"  Exception: {type(e).__name__}: {str(e)}")
+            print(f"  Label distribution: {np.bincount(all_tab_labels_arr)}")
+            print(f"  Prediction shape: {all_tab_preds_arr.shape}")
+            print(f"  Sample predictions: {all_tab_preds_arr[:3]}")
+            print(f"  Sample labels: {all_tab_labels_arr[:10]}")
             tab_auc = 0.0
-    
+
+    # Check for NaN/Inf in image predictions
     if np.isnan(all_img_preds_arr).any() or np.isinf(all_img_preds_arr).any():
-        print(f"[WARNING] NaN/Inf in img predictions at epoch {epoch}, setting AUC=0")
+        print(f"[ERROR] NaN/Inf detected in img predictions at epoch {epoch}")
+        print(f"  Sample predictions: {all_img_preds_arr[:5]}")
         img_auc = 0.0
     else:
         try:
-            img_auc = roc_auc_score(all_img_labels, all_img_preds, multi_class="ovr", average="macro")
-        except:
-            print(f"[WARNING] Error calculating img AUC at epoch {epoch}")
+            if num_classes == 2:
+                img_auc = roc_auc_score(all_img_labels_arr, all_img_preds_arr[:, 1])
+            else:
+                img_auc = roc_auc_score(all_img_labels_arr, all_img_preds_arr, 
+                                       multi_class="ovr", average="macro")
+        except Exception as e:
+            print(f"[ERROR] Img AUC calculation failed at epoch {epoch}")
+            print(f"  Exception: {type(e).__name__}: {str(e)}")
+            print(f"  Label distribution: {np.bincount(all_img_labels_arr)}")
+            print(f"  Prediction shape: {all_img_preds_arr.shape}")
+            print(f"  Sample predictions: {all_img_preds_arr[:3]}")
+            print(f"  Sample labels: {all_img_labels_arr[:10]}")
             img_auc = 0.0
     # ========== END FIX 5 ==========
 
