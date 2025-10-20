@@ -454,7 +454,7 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
     tab_accuracy = {cls: (correct_tab[cls] / total_tab[cls]) * 100 if total_tab[cls] > 0 else 0 for cls in range(num_classes)}
     img_accuracy = {cls: (correct_img[cls] / total_img[cls]) * 100 if total_img[cls] > 0 else 0 for cls in range(num_classes)}
 
-    # ========== FIX 5: CORRECTED AUC calculation with proper error handling ==========
+    # ========== FIX 5: CORRECTED AUC calculation - works for ANY dataset ==========
     # Convert to numpy arrays
     all_tab_preds_arr = np.array(all_tab_preds)
     all_img_preds_arr = np.array(all_img_preds)
@@ -468,17 +468,18 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
         tab_auc = 0.0
     else:
         try:
-            # For binary classification with 2 classes
+            # Automatically handle binary vs multi-class based on detected num_classes
             if num_classes == 2:
-                # Use probability of positive class (class 1)
+                # Binary: use probability of positive class (class 1)
                 tab_auc = roc_auc_score(all_tab_labels_arr, all_tab_preds_arr[:, 1])
             else:
-                # For multi-class
+                # Multi-class: use one-vs-rest
                 tab_auc = roc_auc_score(all_tab_labels_arr, all_tab_preds_arr, 
                                        multi_class="ovr", average="macro")
         except Exception as e:
             print(f"[ERROR] Tab AUC calculation failed at epoch {epoch}")
             print(f"  Exception: {type(e).__name__}: {str(e)}")
+            print(f"  Detected classes: {num_classes}")
             print(f"  Label distribution: {np.bincount(all_tab_labels_arr)}")
             print(f"  Prediction shape: {all_tab_preds_arr.shape}")
             print(f"  Sample predictions: {all_tab_preds_arr[:3]}")
@@ -500,6 +501,7 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
         except Exception as e:
             print(f"[ERROR] Img AUC calculation failed at epoch {epoch}")
             print(f"  Exception: {type(e).__name__}: {str(e)}")
+            print(f"  Detected classes: {num_classes}")
             print(f"  Label distribution: {np.bincount(all_img_labels_arr)}")
             print(f"  Prediction shape: {all_img_preds_arr.shape}")
             print(f"  Sample predictions: {all_img_preds_arr[:3]}")
