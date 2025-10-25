@@ -154,10 +154,10 @@ def calculate_vif_safe(X_data):
     return vif_values
 
 # Use a sample for VIF calculation (faster)
-X_sample = X_train[:min(1000, len(X_train))]
-vif_values = calculate_vif_safe(X_sample)
-print(f"[INFO] VIF values: min={vif_values.min():.2f}, max={vif_values.max():.2f}, mean={vif_values.mean():.2f}")
-
+X_sample = X_train[:min(1000, len(X_train))]  
+vif_df = calculate_vif_safe(X_sample)
+vif_values = vif_df['VIF'].values
+print("✅ VIF values calculated once and fixed for training.")
 # ========== THAT'S IT! ==========
 # ========== END FIX 1 ==========
 
@@ -351,6 +351,7 @@ class CVAEWithTabEmbedding(nn.Module):
 # ========== END FIX 3 ==========
 
 # ========== FIX 4: Create model with pre-calculated VIF ==========
+#cvae = CVAEWithTabEmbedding(tab_latent_size, vif_values=vif_values).to(DEVICE)
 cvae = CVAEWithTabEmbedding(tab_latent_size, vif_values=vif_values).to(DEVICE)
 optimizer = optim.AdamW(cvae.parameters(), lr=0.001)
 
