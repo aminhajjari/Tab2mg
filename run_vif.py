@@ -280,31 +280,27 @@ model_with_embeddings = SimpleMLP(tab_latent_size)
 class VIFInitialization(nn.Module):
     def __init__(self, input_dim, vif_values):
         super(VIFInitialization, self).__init__()
-        
         self.input_dim = input_dim
         self.vif_values = vif_values
-        self.relu = nn.ReLU()
         self.fc1 = nn.Linear(input_dim, input_dim + 4)
         self.fc2 = nn.Linear(input_dim + 4, input_dim)
-        
-        self.initialize_weights()
 
-    def initialize_weights(self):
+        # ---- Normalize and invert VIF ----
+        vif_tensor = torch.tensor(vif_values, dtype=torch.float32)
+        vif_tensor = vif_tensor / (vif_tensor.mean() + 1e-6)
+        inv_vif = 1.0 / torch.clamp(vif_tensor, min=1.0)
+
+        # ---- Initialize weights based on inverse VIF ----
         with torch.no_grad():
-            vif_tensor = torch.tensor(self.vif_values, dtype=torch.float32)
-            # Safe inverse: handle any remaining issues
-            inv_vif = 1.0 / torch.clamp(vif_tensor, min=1.0)
-            
-            for i in range(self.input_dim):
-                self.fc1.weight.data[i, :] = inv_vif[i] / (self.input_dim + 4)
-            
-            nn.init.xavier_uniform_(self.fc2.weight)
+            for i in range(self.fc1.weight.data.shape[0]):
+                self.fc1.weight.data[i, :] = inv_vif[i % len(inv_vif)] / (self.input_dim + 4)
+        print("✅ VIFInitialization: weights set using inverse VIF values.")
 
     def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
         return x
-# ========== END FIX 2 ==========
+
 
 # ========== FIX 3: Modified CVAEWithTabEmbedding to use pre-calculated VIF ==========
 class CVAEWithTabEmbedding(nn.Module):
