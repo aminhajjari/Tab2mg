@@ -154,9 +154,9 @@ def calculate_vif_safe(X_data):
     return vif_values
 
 # Use a sample for VIF calculation (faster)
+# Use a sample for VIF calculation (faster)
 X_sample = X_train[:min(1000, len(X_train))]  
-vif_df = calculate_vif_safe(X_sample)
-vif_values = vif_df['VIF'].values
+vif_values = calculate_vif_safe(X_sample)  # ✅ Direct assignment - it's already a numpy array
 print("✅ VIF values calculated once and fixed for training.")
 # ========== THAT'S IT! ==========
 # ========== END FIX 1 ==========
