@@ -14,36 +14,64 @@ from torchvision import datasets, transforms
 import itertools
 import argparse
 import os
-
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 import warnings
+# For .arff support
+from scipy.io.arff import loadarff  # Add this import
+
 # Argument parser
 parser = argparse.ArgumentParser(description="Welcome to Table2Image")
-parser.add_argument('--csv', type=str, required=True, help='Path to the dataset (csv)')
+parser.add_argument('--input_file', type=str, required=True, help='Path to the dataset (.csv, .data, or .arff)')
 parser.add_argument('--save_dir', type=str, required=True, help='Path to save the final model')
 args = parser.parse_args()
 
 # Parameters
 EPOCH = 50
 BATCH_SIZE = 64
-
-csv_path = args.csv
-file_name = os.path.basename(csv_path).replace('.csv', '')
+input_path = args.input_file
+file_ext = os.path.splitext(input_path)[1].lower()  # Get file extension
+file_name = os.path.basename(input_path).replace(file_ext, '')
 saving_path = args.save_dir + '.pt'
 
 # --- Load and preprocess the tabular data ---
-df = pd.read_csv(csv_path)
+print(f"[INFO] Loading file: {input_path} (format: {file_ext})")
 
-# Automatically detect the target column
+if file_ext == '.csv':
+    df = pd.read_csv(input_path)
+elif file_ext == '.data':
+    # Try common separators for .data files (e.g., UCI datasets often use space or comma)
+    try:
+        df = pd.read_csv(input_path, sep=',', header=None)  # Try comma first
+    except pd.errors.ParserError:
+        try:
+            df = pd.read_csv(input_path, sep=' ', header=None)  # Then space
+        except pd.errors.ParserError:
+            df = pd.read_csv(input_path, sep='\t', header=None)  # Then tab
+    # If no header, assume columns are numeric or infer
+    if df.columns.dtype == 'int64':  # If auto-named columns (0,1,2...)
+        df.columns = [f'feature_{i}' for i in range(df.shape[1])]
+elif file_ext == '.arff':
+    # Load ARFF using scipy
+    data, meta = loadarff(input_path)
+    df = pd.DataFrame(data)
+    # Convert byte strings to regular strings if needed (common in ARFF)
+    for col in df.select_dtypes([object]):
+        if df[col].dtype == 'object':
+            df[col] = df[col].str.decode('utf-8')
+else:
+    raise ValueError(f"Unsupported file format: {file_ext}. Supported: .csv, .data, .arff")
+
+# Handle missing values or empty lines (common in .data/.arff)
+df = df.dropna(how='all').fillna(0)  # Simple fill; adjust if needed
+
+# Automatically detect the target column (same as before)
 target_col_candidates = [
     'target', 'class', 'outcome', 'Class', 'binaryClass', 'status', 'Target',
     'TR', 'speaker', 'Home/Away', 'Outcome', 'Leaving_Certificate', 'technology',
     'signal', 'label', 'Label', 'click', 'percent_pell_grant', 'Survival',
     'diagnosis'
 ]
-
 target_col = next((col for col in df.columns if col in target_col_candidates), None)
-
 if target_col is None:
     target_col = df.columns[-1]
     print(f"[INFO] Using last column '{target_col}' as target.")
