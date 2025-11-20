@@ -1,276 +1,227 @@
 import random
+import os
+import logging
+import warnings
+from typing import Tuple
 import numpy as np
 import pandas as pd
+from scipy.io.arff import loadarff
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
+from sklearn.metrics import roc_auc_score
+import argparse
+import itertools
+
 import torch
 from torch import nn, optim
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader, Subset, ConcatDataset, TensorDataset, random_split
-from torch.utils.data.sampler import Sampler
+from torch.utils.data import Dataset, DataLoader, Subset, ConcatDataset, TensorDataset
 import torchvision
 from torchvision import datasets, transforms
-import itertools
-import argparse
-import os
 from statsmodels.stats.outliers_influence import variance_inflation_factor
-import warnings
-# For .arff support
-from scipy.io.arff import loadarff  # Add this import
 
-# Argument parser
-parser = argparse.ArgumentParser(description="Welcome to Table2Image")
-parser.add_argument('--input_file', type=str, required=True, help='Path to the dataset (.csv, .data, or .arff)')
-parser.add_argument('--save_dir', type=str, required=True, help='Path to save the final model')
-args = parser.parse_args()
-
-# Parameters
-EPOCH = 50
-BATCH_SIZE = 64
-input_path = args.input_file
-file_ext = os.path.splitext(input_path)[1].lower()  # Get file extension
-file_name = os.path.basename(input_path).replace(file_ext, '')
-saving_path = args.save_dir + '.pt'
-
-# --- Load and preprocess the tabular data ---
-print(f"[INFO] Loading file: {input_path} (format: {file_ext})")
-
-if file_ext == '.csv':
-    df = pd.read_csv(input_path)
-elif file_ext == '.data':
-    # Try common separators for .data files (e.g., UCI datasets often use space or comma)
-    try:
-        df = pd.read_csv(input_path, sep=',', header=None)  # Try comma first
-    except pd.errors.ParserError:
-        try:
-            df = pd.read_csv(input_path, sep=' ', header=None)  # Then space
-        except pd.errors.ParserError:
-            df = pd.read_csv(input_path, sep='\t', header=None)  # Then tab
-    # If no header, assume columns are numeric or infer
-    if df.columns.dtype == 'int64':  # If auto-named columns (0,1,2...)
-        df.columns = [f'feature_{i}' for i in range(df.shape[1])]
-elif file_ext == '.arff':
-    # Load ARFF using scipy
-    data, meta = loadarff(input_path)
-    df = pd.DataFrame(data)
-    # Convert byte strings to regular strings if needed (common in ARFF)
-    for col in df.select_dtypes([object]):
-        if df[col].dtype == 'object':
-            df[col] = df[col].str.decode('utf-8')
-else:
-    raise ValueError(f"Unsupported file format: {file_ext}. Supported: .csv, .data, .arff")
-
-# Handle missing values or empty lines (common in .data/.arff)
-df = df.dropna(how='all').fillna(0)  # Simple fill; adjust if needed
-
-# Automatically detect the target column (same as before)
-target_col_candidates = [
-    'target', 'class', 'outcome', 'Class', 'binaryClass', 'status', 'Target',
-    'TR', 'speaker', 'Home/Away', 'Outcome', 'Leaving_Certificate', 'technology',
-    'signal', 'label', 'Label', 'click', 'percent_pell_grant', 'Survival',
-    'diagnosis'
-]
-target_col = next((col for col in df.columns if col in target_col_candidates), None)
-if target_col is None:
-    target_col = df.columns[-1]
-    print(f"[INFO] Using last column '{target_col}' as target.")
-
-# Handle non-numeric target labels
-if df[target_col].dtype == 'object' or not np.issubdtype(df[target_col].dtype, np.number):
-    print(f"[INFO] Converting string labels in '{target_col}' to integers...")
-    from sklearn.preprocessing import LabelEncoder
-    le = LabelEncoder()
-    y = le.fit_transform(df[target_col].astype(str))
-    unique_values = le.classes_.tolist()
-else:
-    y = df[target_col].astype(int).values
-    unique_values = sorted(set(y))
-
-num_classes = len(unique_values)
-print(f"[INFO] Detected {num_classes} unique classes: {unique_values}")
-
-# Drop target to get features
-X = df.drop(columns=[target_col]).values
-
-# Ensure all features are numeric
-X = pd.DataFrame(X).apply(pd.to_numeric, errors='coerce').fillna(0).values
-
-# Mapping labels for classes
-unique_values = sorted(set(y))
-num_classes = int(len(unique_values))
-value_map = {unique_values[i]: i for i in range(len(unique_values))}
-y = [value_map[val] for val in y]
-y = np.array(y)
-
-n_cont_features = X.shape[1]
-tab_latent_size = n_cont_features + 4
-USE_CUDA = torch.cuda.is_available()
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-# Load FashionMNIST
-DATASET_ROOT = '/project/def-arashmoh/shahab33/Msc/datasets'
-
-fashionmnist_dataset = datasets.FashionMNIST(
-    root=DATASET_ROOT,
-    train=True,
-    download=False,
-    transform=transforms.ToTensor()
+# ============ LOGGING SETUP ============
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(levelname)s] %(message)s'
 )
-
-mnist_dataset = datasets.MNIST(
-    root=DATASET_ROOT,
-    train=True,
-    download=False,
-    transform=transforms.ToTensor()
-)
-
-class ModifiedLabelDataset(Dataset):
-    def __init__(self, dataset, label_offset=10):
-        self.dataset = dataset
-        self.label_offset = label_offset
-
-    def __len__(self):
-        return len(self.dataset)
-
-    def __getitem__(self, idx):
-        image, label = self.dataset[idx]
-        return image, label + self.label_offset
-
-modified_mnist_dataset = ModifiedLabelDataset(mnist_dataset, label_offset=10)
-
-# Normalize tabular features
-scaler = StandardScaler()
-X = scaler.fit_transform(X)
-
-# Split tabular data into train and test sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-
-# Create TensorDatasets
-train_tabular_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.long))
-test_tabular_dataset = TensorDataset(torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test, dtype=torch.long))
-
-# ========== FIX 1: Calculate VIF once BEFORE model creation ==========
-print("[INFO] Calculating VIF values...")
+logger = logging.getLogger(__name__)
+warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 
-def calculate_vif_safe(X_data):
-    """Calculate VIF with proper error handling"""
-    from statsmodels.stats.outliers_influence import variance_inflation_factor
+# ============ DATA LOADING FUNCTIONS ============
+
+def check_file_size(filepath: str, max_mb: int = 1000) -> float:
+    """Check if file is too large before loading."""
+    size_mb = os.path.getsize(filepath) / (1024 * 1024)
+    if size_mb > max_mb:
+        raise ValueError(
+            f"File too large: {size_mb:.1f}MB (max: {max_mb}MB). "
+            f"Consider sampling or splitting the dataset."
+        )
+    logger.info(f"File size: {size_mb:.1f}MB")
+    return size_mb
+
+
+def smart_fill_missing(df: pd.DataFrame, threshold: float = 0.5) -> pd.DataFrame:
+    """Intelligently handle missing values."""
+    initial_na = df.isna().sum().sum()
     
+    df = df.dropna(axis=1, thresh=len(df) * (1 - threshold))
+    df = df.dropna(how='all')
+    
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols) > 0:
+        df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
+    
+    object_cols = df.select_dtypes(include=['object']).columns
+    for col in object_cols:
+        mode_val = df[col].mode()
+        fill_val = mode_val[0] if len(mode_val) > 0 else 'unknown'
+        df[col] = df[col].fillna(fill_val)
+    
+    final_na = df.isna().sum().sum()
+    logger.info(f"Missing values: {initial_na} → {final_na}")
+    return df
+
+
+def decode_bytes_column(col_data: pd.Series) -> pd.Series:
+    """Safely decode byte strings to UTF-8."""
+    if col_data.dtype == 'object':
+        return col_data.apply(
+            lambda x: x.decode('utf-8') if isinstance(x, bytes) else str(x)
+        )
+    return col_data
+
+
+def load_csv(filepath: str) -> pd.DataFrame:
+    """Load CSV file."""
+    logger.info(f"Loading CSV: {filepath}")
+    return pd.read_csv(filepath)
+
+
+def load_data_file(filepath: str) -> pd.DataFrame:
+    """Load .data file with automatic delimiter detection."""
+    logger.info(f"Loading .data file: {filepath}")
+    separators = [',', ' ', '\t']
+    df = None
+    
+    for sep in separators:
+        try:
+            df = pd.read_csv(filepath, sep=sep, header=None)
+            logger.info(f"Successfully parsed with delimiter: '{sep}'")
+            
+            expected_cols = list(range(df.shape[1]))
+            if list(df.columns) == expected_cols:
+                df.columns = [f'feature_{i}' for i in range(df.shape[1])]
+                logger.info(f"Auto-generated column names")
+            return df
+        except (pd.errors.ParserError, pd.errors.EmptyDataError):
+            continue
+    
+    raise ValueError(f"Could not parse .data file with separators: {separators}")
+
+
+def load_arff(filepath: str) -> pd.DataFrame:
+    """Load ARFF file with proper byte string handling."""
+    logger.info(f"Loading ARFF: {filepath}")
+    
+    try:
+        data, meta = loadarff(filepath)
+        df = pd.DataFrame(data)
+        
+        for col in df.select_dtypes(include=['object']).columns:
+            df[col] = decode_bytes_column(df[col])
+        
+        logger.info(f"ARFF loaded successfully. Shape: {df.shape}")
+        return df
+    except Exception as e:
+        raise ValueError(f"Failed to load ARFF file: {str(e)}")
+
+
+def find_target_column(df: pd.DataFrame, candidates: list = None) -> str:
+    """Intelligently find the target column."""
+    if candidates is None:
+        candidates = [
+            'target', 'class', 'outcome', 'Class', 'binaryClass', 'status',
+            'Target', 'TR', 'speaker', 'Home/Away', 'Outcome', 
+            'Leaving_Certificate', 'technology', 'signal', 'label', 'Label',
+            'click', 'percent_pell_grant', 'Survival', 'diagnosis'
+        ]
+    
+    for col in candidates:
+        if col in df.columns:
+            logger.info(f"Found target column: '{col}' (explicit match)")
+            return col
+    
+    last_col = df.columns[-1]
+    unique_vals = df[last_col].nunique()
+    total_rows = len(df)
+    cardinality_ratio = unique_vals / total_rows
+    
+    if cardinality_ratio < 0.5:
+        logger.warning(
+            f"Inferring target column: '{last_col}' "
+            f"({unique_vals} unique values in {total_rows} rows)"
+        )
+        return last_col
+    
+    raise ValueError(
+        f"Cannot infer target column. Columns: {list(df.columns)}\n"
+        f"Please rename your target to one of: {candidates[:5]}..."
+    )
+
+
+def load_tabular_data(filepath: str) -> Tuple[np.ndarray, np.ndarray, list]:
+    """Load and preprocess tabular data from CSV, .data, or ARFF."""
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"File not found: {filepath}")
+    
+    check_file_size(filepath, max_mb=1000)
+    
+    file_ext = os.path.splitext(filepath)[1].lower()
+    
+    if file_ext == '.csv':
+        df = load_csv(filepath)
+    elif file_ext == '.data':
+        df = load_data_file(filepath)
+    elif file_ext == '.arff':
+        df = load_arff(filepath)
+    else:
+        raise ValueError(
+            f"Unsupported file format: '{file_ext}'. Supported: .csv, .data, .arff"
+        )
+    
+    logger.info(f"Loaded data shape: {df.shape}")
+    df = smart_fill_missing(df)
+    
+    target_col = find_target_column(df)
+    
+    if not np.issubdtype(df[target_col].dtype, np.number):
+        logger.info(f"Converting non-numeric target to integers...")
+        le = LabelEncoder()
+        y = le.fit_transform(df[target_col].astype(str))
+        unique_classes = le.classes_.tolist()
+    else:
+        y = df[target_col].values.astype(int)
+        unique_classes = sorted(set(y))
+    
+    X = df.drop(columns=[target_col]).values
+    X = pd.DataFrame(X).apply(pd.to_numeric, errors='coerce').fillna(0).values
+    
+    logger.info(f"Features shape: {X.shape}")
+    logger.info(f"Target distribution: {np.bincount(y)}")
+    logger.info(f"Unique classes: {unique_classes}")
+    
+    return X, y, unique_classes
+
+
+# ============ VIF CALCULATION ============
+
+def calculate_vif_safe(X_data: np.ndarray) -> np.ndarray:
+    """Calculate VIF with proper error handling."""
     df = pd.DataFrame(X_data)
     n_features = df.shape[1]
     vif_values = []
     
-    # Suppress the warning that's causing the error message
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', category=RuntimeWarning)
-        
-        for i in range(n_features):
-            try:
-                vif = variance_inflation_factor(df.values, i)
-                # Handle invalid values
-                if np.isnan(vif) or np.isinf(vif):
-                    vif = 1.0
-            except:
+    for i in range(n_features):
+        try:
+            vif = variance_inflation_factor(df.values, i)
+            if np.isnan(vif) or np.isinf(vif):
                 vif = 1.0
-            vif_values.append(vif)
+        except:
+            vif = 1.0
+        vif_values.append(vif)
     
     vif_values = np.array(vif_values)
-    # Clip to reasonable range
     vif_values = np.clip(vif_values, 1.0, 100.0)
     return vif_values
 
-# Use a sample for VIF calculation (faster)
-# Use a sample for VIF calculation (faster)
-X_sample = X_train[:min(1000, len(X_train))]  
-vif_values = calculate_vif_safe(X_sample)  # ✅ Direct assignment - it's already a numpy array
-print("✅ VIF values calculated once and fixed for training.")
-# ========== THAT'S IT! ==========
-# ========== END FIX 1 ==========
 
-# Calculate number of samples needed for each label
-train_tabular_label_counts = torch.bincount(train_tabular_dataset.tensors[1], minlength=int(len(unique_values)))
-test_tabular_label_counts = torch.bincount(test_tabular_dataset.tensors[1], minlength=int(len(unique_values)))
-
-num_samples_needed = train_tabular_label_counts.tolist()
-num_samples_needed_test = test_tabular_label_counts.tolist()
-
-valid_labels = {i for i in range(len(unique_values))}
-
-# Filter FashionMNIST dataset
-filtered_fashion = Subset(fashionmnist_dataset, 
-                          [i for i, (_, label) in enumerate(fashionmnist_dataset) if label in valid_labels])
-
-# Filter MNIST dataset and remap labels
-filtered_mnist = Subset(modified_mnist_dataset, 
-                        [i for i, (_, label) in enumerate(modified_mnist_dataset) if label in valid_labels])
-
-# Combine FashionMNIST and MNIST
-combined_dataset = ConcatDataset([filtered_fashion, filtered_mnist])
-
-# Integrity check
-indices_by_label = {label: [] for label in range(int(len(unique_values)))}
-
-for i, (_, label) in enumerate(combined_dataset):
-    if label not in indices_by_label:
-        print(f"Unexpected label {label} at index {i}")
-    indices_by_label[label].append(i)
-
-# Generate repeated indices for balanced dataset
-repeated_indices = {
-    label: list(itertools.islice(itertools.cycle(indices_by_label[label]),
-                                 num_samples_needed[label] + num_samples_needed_test[label]))
-    for label in indices_by_label
-}
-
-# Align the train and test indices for both tabular and image datasets by label
-aligned_train_indices = []
-aligned_test_indices = []
-
-for label in valid_labels:
-    train_tab_indices = [i for i, lbl in enumerate(y_train) if lbl == label]
-    test_tab_indices = [i for i, lbl in enumerate(y_test) if lbl == label]
-
-    train_img_indices = repeated_indices[label][:num_samples_needed[label]]
-    test_img_indices = repeated_indices[label][num_samples_needed[label]:num_samples_needed[label] + num_samples_needed_test[label]]
-
-    if len(train_tab_indices) == len(train_img_indices) and len(test_tab_indices) == len(test_img_indices):
-        aligned_train_indices.extend(list(zip(train_tab_indices, train_img_indices)))
-        aligned_test_indices.extend(list(zip(test_tab_indices, test_img_indices)))
-    else:
-        raise ValueError(f"Mismatch in train/test counts for label {label}")
-
-# Create final filtered subsets with aligned indices
-train_filtered_tab_set = Subset(train_tabular_dataset, [idx[0] for idx in aligned_train_indices])
-train_filtered_img_set = Subset(combined_dataset, [idx[1] for idx in aligned_train_indices])
-
-test_filtered_tab_set = Subset(test_tabular_dataset, [idx[0] for idx in aligned_test_indices])
-test_filtered_img_set = Subset(combined_dataset, [idx[1] for idx in aligned_test_indices])
-
-class SynchronizedDataset(Dataset):
-    def __init__(self, tabular_dataset, image_dataset):
-        self.tabular_dataset = tabular_dataset
-        self.image_dataset = image_dataset
-        assert len(self.tabular_dataset) == len(self.image_dataset), "Datasets must have the same length."
-
-    def __len__(self):
-        return len(self.tabular_dataset)
-
-    def __getitem__(self, index):
-        tab_data, tab_label = self.tabular_dataset[index]
-        img_data, img_label = self.image_dataset[index]
-        assert tab_label == img_label, f"Label mismatch: tab_label={tab_label}, img_label={img_label}"
-        return tab_data, tab_label, img_data, img_label
-
-train_synchronized_dataset = SynchronizedDataset(train_filtered_tab_set, train_filtered_img_set)
-test_synchronized_dataset = SynchronizedDataset(test_filtered_tab_set, test_filtered_img_set)
-
-train_synchronized_loader = DataLoader(dataset=train_synchronized_dataset, batch_size=BATCH_SIZE, shuffle=True)
-test_synchronized_loader = DataLoader(dataset=test_synchronized_dataset, batch_size=BATCH_SIZE)
+# ============ MODEL ARCHITECTURES ============
 
 class SimpleCNN(nn.Module):
-    def __init__(self, num_classes=2):
+    def __init__(self, num_classes: int = 2):
         super(SimpleCNN, self).__init__()
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
@@ -290,11 +241,12 @@ class SimpleCNN(nn.Module):
         x = self.fc2(x)
         return x
 
+
 class SimpleMLP(nn.Module):
-    def __init__(self, tab_latent_size=tab_latent_size):
+    def __init__(self, n_features: int, tab_latent_size: int, num_classes: int):
         super(SimpleMLP, self).__init__()
-        self.fc1 = nn.Linear(n_cont_features, tab_latent_size)
-        self.fc2 = nn.Linear(tab_latent_size, int(len(unique_values)))
+        self.fc1 = nn.Linear(n_features, tab_latent_size)
+        self.fc2 = nn.Linear(tab_latent_size, num_classes)
         self.relu = nn.ReLU()
 
     def forward(self, x):
@@ -302,27 +254,22 @@ class SimpleMLP(nn.Module):
         x = self.fc2(tab_latent)
         return tab_latent, x
 
-model_with_embeddings = SimpleMLP(tab_latent_size)
 
-# ========== FIX 2: VIFInitialization with better error handling ==========
 class VIFInitialization(nn.Module):
-    def __init__(self, input_dim, vif_values):
+    def __init__(self, input_dim: int, vif_values: np.ndarray):
         super(VIFInitialization, self).__init__()
         self.input_dim = input_dim
-        self.vif_values = vif_values
         self.fc1 = nn.Linear(input_dim, input_dim + 4)
         self.fc2 = nn.Linear(input_dim + 4, input_dim)
 
-        # ---- Normalize and invert VIF ----
         vif_tensor = torch.tensor(vif_values, dtype=torch.float32)
         vif_tensor = vif_tensor / (vif_tensor.mean() + 1e-6)
         inv_vif = 1.0 / torch.clamp(vif_tensor, min=1.0)
 
-        # ---- Initialize weights based on inverse VIF ----
         with torch.no_grad():
             for i in range(self.fc1.weight.data.shape[0]):
-                self.fc1.weight.data[i, :] = inv_vif[i % len(inv_vif)] / (self.input_dim + 4)
-        print("✅ VIFInitialization: weights set using inverse VIF values.")
+                self.fc1.weight.data[i, :] = inv_vif[i % len(inv_vif)] / (input_dim + 4)
+        logger.info("✅ VIFInitialization: weights set using inverse VIF values.")
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
@@ -330,33 +277,33 @@ class VIFInitialization(nn.Module):
         return x
 
 
-# ========== FIX 3: Modified CVAEWithTabEmbedding to use pre-calculated VIF ==========
 class CVAEWithTabEmbedding(nn.Module):
-    def __init__(self, tab_latent_size=8, latent_size=8, vif_values=None):
+    def __init__(self, n_features: int, tab_latent_size: int, num_classes: int, 
+                 vif_values: np.ndarray = None, device: torch.device = None):
         super(CVAEWithTabEmbedding, self).__init__()
+        self.device = device
         
-        self.mlp = model_with_embeddings
+        self.mlp = SimpleMLP(n_features, tab_latent_size, num_classes)
         
-        # Create VIF model once during initialization
         if vif_values is not None:
-            self.vif_model = VIFInitialization(n_cont_features, vif_values)
+            self.vif_model = VIFInitialization(n_features, vif_values)
         else:
             self.vif_model = None
         
         self.encoder = nn.Sequential(
-            nn.Linear(28*28 + tab_latent_size + n_cont_features, 128),
+            nn.Linear(28*28 + tab_latent_size + n_features, 128),
             nn.ReLU(),
-            nn.Linear(128, latent_size)
+            nn.Linear(128, tab_latent_size)
         )
         
         self.decoder = nn.Sequential(
-            nn.Linear(latent_size + tab_latent_size + n_cont_features, 128),
+            nn.Linear(tab_latent_size + tab_latent_size + n_features, 128),
             nn.ReLU(),
             nn.Linear(128, 28*28),
             nn.Sigmoid()
         )
         
-        self.final_classifier = SimpleCNN(num_classes=int(len(unique_values)))
+        self.final_classifier = SimpleCNN(num_classes=num_classes)
 
     def encode(self, x, tab_embedding, vif_embedding):
         return self.encoder(torch.cat([x, tab_embedding, vif_embedding], dim=1))
@@ -365,7 +312,6 @@ class CVAEWithTabEmbedding(nn.Module):
         return self.decoder(torch.cat([z, tab_embedding, vif_embedding], dim=1))
     
     def forward(self, x, tab_data):
-        # Use pre-calculated VIF model (no recalculation!)
         if self.vif_model is not None:
             vif_embedding = self.vif_model(tab_data)
         else:
@@ -376,54 +322,72 @@ class CVAEWithTabEmbedding(nn.Module):
         recon_x = self.decode(z, tab_embedding, vif_embedding)
         img_pred = self.final_classifier(recon_x.view(-1, 1, 28, 28))
         return recon_x, tab_pred, img_pred
-# ========== END FIX 3 ==========
 
-# ========== FIX 4: Create model with pre-calculated VIF ==========
-#cvae = CVAEWithTabEmbedding(tab_latent_size, vif_values=vif_values).to(DEVICE)
-cvae = CVAEWithTabEmbedding(tab_latent_size, vif_values=vif_values).to(DEVICE)
-optimizer = optim.AdamW(cvae.parameters(), lr=0.001)
+
+# ============ DATASET UTILITIES ============
+
+class SynchronizedDataset(Dataset):
+    def __init__(self, tabular_dataset, image_dataset):
+        self.tabular_dataset = tabular_dataset
+        self.image_dataset = image_dataset
+        assert len(self.tabular_dataset) == len(self.image_dataset), \
+            "Datasets must have the same length."
+
+    def __len__(self):
+        return len(self.tabular_dataset)
+
+    def __getitem__(self, index):
+        tab_data, tab_label = self.tabular_dataset[index]
+        img_data, img_label = self.image_dataset[index]
+        assert tab_label == img_label, \
+            f"Label mismatch: tab_label={tab_label}, img_label={img_label}"
+        return tab_data, tab_label, img_data, img_label
+
+
+# ============ TRAINING & TESTING ============
 
 def loss_function(recon_x, x, tab_pred, tab_labels, img_pred, img_labels):
+    """Combined loss function."""
     BCE = F.mse_loss(recon_x, x)
     tab_loss = F.cross_entropy(tab_pred, tab_labels)
     img_loss = F.cross_entropy(img_pred, img_labels)
     return BCE + tab_loss + img_loss
 
-def train(model, train_data_loader, optimizer, epoch):
+
+def train(model, train_data_loader, optimizer, epoch, device):
+    """Train for one epoch."""
     model.train()
     train_loss = 0
     
     for tab_data, tab_label, img_data, img_label in train_data_loader:
-        img_data = img_data.view(-1, 28*28).to(DEVICE)
-        tab_data = tab_data.to(DEVICE)
-        img_label = img_label.to(DEVICE).long()
-        tab_label = tab_label.to(DEVICE).long()
+        img_data = img_data.view(-1, 28*28).to(device)
+        tab_data = tab_data.to(device)
+        img_label = img_label.to(device).long()
+        tab_label = tab_label.to(device).long()
         
         optimizer.zero_grad()
         
         random_array = np.random.rand(img_data.shape[0], 28*28)
-        x_rand = torch.Tensor(random_array).to(DEVICE)
+        x_rand = torch.Tensor(random_array).to(device)
         
         recon_x, tab_pred, img_pred = model(x_rand, tab_data)
-
         loss = loss_function(recon_x, img_data, tab_pred, tab_label, img_pred, img_label)
+        
         loss.backward()
         train_loss += loss.item()
         optimizer.step()
+    
+    logger.info(f"Epoch {epoch}: Train Loss = {train_loss / len(train_data_loader):.4f}")
 
-from sklearn.metrics import roc_auc_score
 
-def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, best_model_path='best_model.pth'):
+def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, 
+         device, num_classes, best_model_path='best_model.pth'):
+    """Evaluate on test set."""
     model.eval()
     test_loss = 0
     correct_tab_total = 0
     correct_img_total = 0
     total = 0
-    num_classes = int(len(unique_values))
-    correct_tab = {i: 0 for i in range(num_classes)}
-    total_tab = {i: 0 for i in range(num_classes)}
-    correct_img = {i: 0 for i in range(num_classes)}
-    total_img = {i: 0 for i in range(num_classes)}
     
     all_tab_labels = []
     all_tab_preds = []
@@ -432,125 +396,268 @@ def test(model, test_data_loader, epoch, best_accuracy, best_auc, best_epoch, be
 
     with torch.no_grad():
         for tab_data, tab_label, img_data, img_label in test_data_loader:
-            img_data = img_data.view(-1, 28*28).to(DEVICE)
-            tab_data = tab_data.to(DEVICE)
-            img_label = img_label.to(DEVICE).long()
-            tab_label = tab_label.to(DEVICE).long()
+            img_data = img_data.view(-1, 28*28).to(device)
+            tab_data = tab_data.to(device)
+            img_label = img_label.to(device).long()
+            tab_label = tab_label.to(device).long()
             
             random_array = np.random.rand(img_data.shape[0], 28*28)
-            x_rand = torch.Tensor(random_array).view(-1, 28*28).to(DEVICE)
+            x_rand = torch.Tensor(random_array).to(device)
             
             recon_x, tab_pred, img_pred = model(x_rand, tab_data)
-            
             test_loss += loss_function(recon_x, img_data, tab_pred, tab_label, img_pred, img_label).item()
             
-            # For AUC, use softmax probabilities
             tab_probs = F.softmax(tab_pred, dim=1)
             img_probs = F.softmax(img_pred, dim=1)
             
-            # Store predictions and labels for AUC calculation
             all_tab_labels.extend(tab_label.cpu().numpy())
             all_tab_preds.extend(tab_probs.cpu().numpy())
             all_img_labels.extend(img_label.cpu().numpy())
             all_img_preds.extend(img_probs.cpu().numpy())
 
-            # Get predicted classes
             tab_predicted = torch.argmax(tab_pred, dim=1)
             img_predicted = torch.argmax(img_pred, dim=1)
             
-            # Calculate per-class accuracy
-            for i in range(len(tab_label)):
-                label = tab_label[i].item()
-                correct_tab[label] += (tab_predicted[i] == label).item()
-                total_tab[label] += 1
-
-            for i in range(len(img_label)):
-                label = img_label[i].item()
-                correct_img[label] += (img_predicted[i] == label).item()
-                total_img[label] += 1
-                
             correct_tab_total += (tab_predicted == tab_label).sum().item()
             correct_img_total += (img_predicted == img_label).sum().item()
             total += tab_label.size(0)
     
     test_loss /= len(test_data_loader)
-    tab_accuracy_total = 100 * correct_tab_total / total
-    img_accuracy_total = 100 * correct_img_total / total
-    tab_accuracy = {cls: (correct_tab[cls] / total_tab[cls]) * 100 if total_tab[cls] > 0 else 0 for cls in range(num_classes)}
-    img_accuracy = {cls: (correct_img[cls] / total_img[cls]) * 100 if total_img[cls] > 0 else 0 for cls in range(num_classes)}
-
-    # ========== FIX 5: CORRECTED AUC calculation - works for ANY dataset ==========
-    # Convert to numpy arrays
+    tab_accuracy = 100 * correct_tab_total / total
+    img_accuracy = 100 * correct_img_total / total
+    
+    # Calculate AUC
     all_tab_preds_arr = np.array(all_tab_preds)
     all_img_preds_arr = np.array(all_img_preds)
     all_tab_labels_arr = np.array(all_tab_labels)
     all_img_labels_arr = np.array(all_img_labels)
 
-    # Check for NaN/Inf in tabular predictions
-    if np.isnan(all_tab_preds_arr).any() or np.isinf(all_tab_preds_arr).any():
-        print(f"[ERROR] NaN/Inf detected in tab predictions at epoch {epoch}")
-        print(f"  Sample predictions: {all_tab_preds_arr[:5]}")
-        tab_auc = 0.0
-    else:
-        try:
-            # Automatically handle binary vs multi-class based on detected num_classes
-            if num_classes == 2:
-                # Binary: use probability of positive class (class 1)
-                tab_auc = roc_auc_score(all_tab_labels_arr, all_tab_preds_arr[:, 1])
-            else:
-                # Multi-class: use one-vs-rest
-                tab_auc = roc_auc_score(all_tab_labels_arr, all_tab_preds_arr, 
-                                       multi_class="ovr", average="macro")
-        except Exception as e:
-            print(f"[ERROR] Tab AUC calculation failed at epoch {epoch}")
-            print(f"  Exception: {type(e).__name__}: {str(e)}")
-            print(f"  Detected classes: {num_classes}")
-            print(f"  Label distribution: {np.bincount(all_tab_labels_arr)}")
-            print(f"  Prediction shape: {all_tab_preds_arr.shape}")
-            print(f"  Sample predictions: {all_tab_preds_arr[:3]}")
-            print(f"  Sample labels: {all_tab_labels_arr[:10]}")
-            tab_auc = 0.0
+    try:
+        if num_classes == 2:
+            tab_auc = roc_auc_score(all_tab_labels_arr, all_tab_preds_arr[:, 1])
+            img_auc = roc_auc_score(all_img_labels_arr, all_img_preds_arr[:, 1])
+        else:
+            tab_auc = roc_auc_score(all_tab_labels_arr, all_tab_preds_arr, 
+                                   multi_class="ovr", average="macro")
+            img_auc = roc_auc_score(all_img_labels_arr, all_img_preds_arr, 
+                                   multi_class="ovr", average="macro")
+    except Exception as e:
+        logger.warning(f"AUC calculation failed: {e}")
+        tab_auc = img_auc = 0.0
 
-    # Check for NaN/Inf in image predictions
-    if np.isnan(all_img_preds_arr).any() or np.isinf(all_img_preds_arr).any():
-        print(f"[ERROR] NaN/Inf detected in img predictions at epoch {epoch}")
-        print(f"  Sample predictions: {all_img_preds_arr[:5]}")
-        img_auc = 0.0
-    else:
-        try:
-            if num_classes == 2:
-                img_auc = roc_auc_score(all_img_labels_arr, all_img_preds_arr[:, 1])
-            else:
-                img_auc = roc_auc_score(all_img_labels_arr, all_img_preds_arr, 
-                                       multi_class="ovr", average="macro")
-        except Exception as e:
-            print(f"[ERROR] Img AUC calculation failed at epoch {epoch}")
-            print(f"  Exception: {type(e).__name__}: {str(e)}")
-            print(f"  Detected classes: {num_classes}")
-            print(f"  Label distribution: {np.bincount(all_img_labels_arr)}")
-            print(f"  Prediction shape: {all_img_preds_arr.shape}")
-            print(f"  Sample predictions: {all_img_preds_arr[:3]}")
-            print(f"  Sample labels: {all_img_labels_arr[:10]}")
-            img_auc = 0.0
-    # ========== END FIX 5 ==========
+    logger.info(
+        f"Epoch {epoch}: Test Loss = {test_loss:.4f} | "
+        f"Tab Acc = {tab_accuracy:.2f}% | Img Acc = {img_accuracy:.2f}% | "
+        f"Tab AUC = {tab_auc:.4f} | Img AUC = {img_auc:.4f}"
+    )
 
-    # Save the best model based on image classification accuracy
-    if img_accuracy_total > best_accuracy:
-        best_accuracy = img_accuracy_total
+    # Save best model
+    if img_accuracy > best_accuracy:
+        best_accuracy = img_accuracy
         best_epoch = epoch
         torch.save(model.state_dict(), best_model_path)
-        
+        logger.info(f"✅ Best model saved with accuracy {best_accuracy:.2f}%")
+    
     if img_auc > best_auc:
         best_auc = img_auc
 
     return best_accuracy, best_auc, best_epoch
 
-best_accuracy = 0
-best_auc = 0
-best_epoch = 0
 
-for epoch in range(1, EPOCH + 1):
-    train(cvae, train_synchronized_loader, optimizer, epoch)
-    best_accuracy, best_auc, best_epoch = test(cvae, test_synchronized_loader, epoch, best_accuracy, best_auc, best_epoch, best_model_path=saving_path)
+# ============ MAIN ============
 
-print(f'Best model image classification accuracy: {best_accuracy:.4f} at epoch: {best_epoch}, Best AUC: {best_auc:.4f}')
+def main():
+    parser = argparse.ArgumentParser(description="Table2Image - Tabular Data Classification")
+    parser.add_argument('--input_file', type=str, required=True, 
+                       help='Path to dataset (.csv, .data, or .arff)')
+    parser.add_argument('--save_dir', type=str, required=True, 
+                       help='Path to save the final model')
+    parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
+    parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
+    parser.add_argument('--dataset_root', type=str, default='/tmp/datasets', 
+                       help='Root directory for MNIST/FashionMNIST')
+    args = parser.parse_args()
+
+    # Parameters
+    EPOCH = args.epochs
+    BATCH_SIZE = args.batch_size
+    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    DATASET_ROOT = args.dataset_root
+    
+    logger.info(f"Device: {DEVICE}")
+    logger.info(f"Epochs: {EPOCH}, Batch Size: {BATCH_SIZE}")
+
+    # Load data
+    logger.info("=" * 60)
+    logger.info("LOADING DATA")
+    logger.info("=" * 60)
+    X, y, unique_classes = load_tabular_data(args.input_file)
+    
+    num_classes = len(unique_classes)
+    n_cont_features = X.shape[1]
+    tab_latent_size = n_cont_features + 4
+    
+    logger.info(f"Number of classes: {num_classes}")
+    logger.info(f"Number of features: {n_cont_features}")
+    logger.info(f"Tab latent size: {tab_latent_size}")
+
+    # Calculate VIF
+    logger.info("Calculating VIF values...")
+    X_sample = X[:min(1000, len(X))]
+    vif_values = calculate_vif_safe(X_sample)
+    logger.info(f"VIF values: {vif_values[:5]}...")
+
+    # Normalize
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+
+    # Train-test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+
+    # Create tabular datasets
+    train_tabular_dataset = TensorDataset(
+        torch.tensor(X_train, dtype=torch.float32),
+        torch.tensor(y_train, dtype=torch.long)
+    )
+    test_tabular_dataset = TensorDataset(
+        torch.tensor(X_test, dtype=torch.float32),
+        torch.tensor(y_test, dtype=torch.long)
+    )
+
+    # Load image datasets
+    logger.info("Loading MNIST/FashionMNIST datasets...")
+    fashionmnist_dataset = datasets.FashionMNIST(
+        root=DATASET_ROOT, train=True, download=True,
+        transform=transforms.ToTensor()
+    )
+    
+    mnist_dataset = datasets.MNIST(
+        root=DATASET_ROOT, train=True, download=True,
+        transform=transforms.ToTensor()
+    )
+
+    class ModifiedLabelDataset(Dataset):
+        def __init__(self, dataset, label_offset=10):
+            self.dataset = dataset
+            self.label_offset = label_offset
+
+        def __len__(self):
+            return len(self.dataset)
+
+        def __getitem__(self, idx):
+            image, label = self.dataset[idx]
+            return image, label + self.label_offset
+
+    modified_mnist_dataset = ModifiedLabelDataset(mnist_dataset, label_offset=10)
+
+    # Prepare image datasets
+    valid_labels = {i for i in range(num_classes)}
+    filtered_fashion = Subset(fashionmnist_dataset, 
+                             [i for i, (_, label) in enumerate(fashionmnist_dataset) 
+                              if label in valid_labels])
+    filtered_mnist = Subset(modified_mnist_dataset,
+                           [i for i, (_, label) in enumerate(modified_mnist_dataset) 
+                            if label in valid_labels])
+
+    combined_dataset = ConcatDataset([filtered_fashion, filtered_mnist])
+
+    # Align indices
+    train_tabular_label_counts = torch.bincount(
+        train_tabular_dataset.tensors[1], minlength=num_classes
+    )
+    test_tabular_label_counts = torch.bincount(
+        test_tabular_dataset.tensors[1], minlength=num_classes
+    )
+
+    indices_by_label = {label: [] for label in range(num_classes)}
+    for i, (_, label) in enumerate(combined_dataset):
+        if label not in indices_by_label:
+            indices_by_label[label] = []
+        indices_by_label[label].append(i)
+
+    repeated_indices = {
+        label: list(itertools.islice(
+            itertools.cycle(indices_by_label[label]),
+            train_tabular_label_counts[label] + test_tabular_label_counts[label]
+        ))
+        for label in indices_by_label
+    }
+
+    aligned_train_indices = []
+    aligned_test_indices = []
+
+    for label in valid_labels:
+        train_tab_indices = [i for i, lbl in enumerate(y_train) if lbl == label]
+        test_tab_indices = [i for i, lbl in enumerate(y_test) if lbl == label]
+
+        train_img_indices = repeated_indices[label][:train_tabular_label_counts[label]]
+        test_img_indices = repeated_indices[label][
+            train_tabular_label_counts[label]:
+            train_tabular_label_counts[label] + test_tabular_label_counts[label]
+        ]
+
+        aligned_train_indices.extend(list(zip(train_tab_indices, train_img_indices)))
+        aligned_test_indices.extend(list(zip(test_tab_indices, test_img_indices)))
+
+    train_filtered_tab = Subset(train_tabular_dataset, 
+                               [idx[0] for idx in aligned_train_indices])
+    train_filtered_img = Subset(combined_dataset, 
+                               [idx[1] for idx in aligned_train_indices])
+    test_filtered_tab = Subset(test_tabular_dataset, 
+                              [idx[0] for idx in aligned_test_indices])
+    test_filtered_img = Subset(combined_dataset, 
+                              [idx[1] for idx in aligned_test_indices])
+
+    train_sync_dataset = SynchronizedDataset(train_filtered_tab, train_filtered_img)
+    test_sync_dataset = SynchronizedDataset(test_filtered_tab, test_filtered_img)
+
+    train_loader = DataLoader(train_sync_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    test_loader = DataLoader(test_sync_dataset, batch_size=BATCH_SIZE)
+
+    logger.info(f"Train samples: {len(train_sync_dataset)}")
+    logger.info(f"Test samples: {len(test_sync_dataset)}")
+
+    # Create model
+    logger.info("=" * 60)
+    logger.info("CREATING MODEL")
+    logger.info("=" * 60)
+    
+    model = CVAEWithTabEmbedding(
+        n_features=n_cont_features,
+        tab_latent_size=tab_latent_size,
+        num_classes=num_classes,
+        vif_values=vif_values,
+        device=DEVICE
+    ).to(DEVICE)
+
+    optimizer = optim.AdamW(model.parameters(), lr=0.001)
+
+    # Train
+    logger.info("=" * 60)
+    logger.info("TRAINING")
+    logger.info("=" * 60)
+    
+    best_accuracy = 0
+    best_auc = 0
+    best_epoch = 0
+    saving_path = args.save_dir + '.pt'
+
+    for epoch in range(1, EPOCH + 1):
+        train(model, train_loader, optimizer, epoch, DEVICE)
+        best_accuracy, best_auc, best_epoch = test(
+            model, test_loader, epoch, best_accuracy, best_auc, best_epoch,
+            DEVICE, num_classes, best_model_path=saving_path
+        )
+
+    logger.info("=" * 60)
+    logger.info("TRAINING COMPLETE")
+    logger.info("=" * 60)
+    logger.info(f"Best model accuracy: {best_accuracy:.4f} at epoch {best_epoch}")
+    logger.info(f"Best AUC: {best_auc:.4f}")
+    logger.info(f"Model saved to: {saving_path}")
+
+
+if __name__ == "__main__":
+    main()
