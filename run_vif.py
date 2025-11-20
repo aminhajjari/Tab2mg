@@ -43,26 +43,90 @@ def check_file_size(filepath: str, max_mb: int = 1000) -> float:
     return size_mb
 
 
-def smart_fill_missing(df: pd.DataFrame, threshold: float = 0.5) -> pd.DataFrame:
-    """Intelligently handle missing values."""
-    initial_na = df.isna().sum().sum()
+def smart_fill_missing(df: pd.DataFrame, threshold: float = 0.5) -> Tuple[pd.DataFrame, dict]:
+    """
+    Handle missing values following standard benchmarking practices.
     
-    df = df.dropna(axis=1, thresh=len(df) * (1 - threshold))
+    This implementation follows the approach used in recent tabular data 
+    benchmarking studies:
+    - Grinsztajn et al. (NeurIPS 2022): "Why do tree-based models still 
+      outperform deep learning on tabular data?"
+    - Gorishniy et al. (NeurIPS 2021): "Revisiting deep learning models 
+      for tabular data"
+    
+    Args:
+        df: Input dataframe with potential missing values
+        threshold: Remove columns with > threshold fraction missing (default: 0.5)
+        
+    Returns:
+        df: Dataframe with missing values handled
+        stats: Dictionary with preprocessing statistics for reporting
+        
+    Strategy:
+        1. Remove columns with >50% missing values
+        2. Remove completely empty rows
+        3. Impute numeric features with median (robust to outliers)
+        4. Impute categorical features with mode
+    """
+    # Track statistics for paper
+    stats = {
+        'initial_shape': df.shape,
+        'initial_missing': df.isna().sum().sum(),
+        'initial_missing_pct': 100 * df.isna().sum().sum() / df.size,
+        'cols_removed': 0,
+        'rows_removed': 0
+    }
+    
+    # Step 1: Remove columns with excessive missing data
+    missing_ratio = df.isna().sum() / len(df)
+    cols_to_drop = missing_ratio[missing_ratio > threshold].index
+    stats['cols_removed'] = len(cols_to_drop)
+    
+    if len(cols_to_drop) > 0:
+        logger.info(
+            f"Removing {len(cols_to_drop)} columns with >{threshold*100:.0f}% missing: "
+            f"{list(cols_to_drop)[:3]}{'...' if len(cols_to_drop) > 3 else ''}"
+        )
+        df = df.drop(columns=cols_to_drop)
+    
+    # Step 2: Remove completely empty rows
+    rows_before = len(df)
     df = df.dropna(how='all')
+    stats['rows_removed'] = rows_before - len(df)
     
+    if stats['rows_removed'] > 0:
+        logger.info(f"Removed {stats['rows_removed']} completely empty rows")
+    
+    # Step 3: Impute numeric columns with median
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     if len(numeric_cols) > 0:
+        # Median is more robust to outliers than mean
         df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
+        logger.debug(f"Imputed {len(numeric_cols)} numeric columns with median")
     
+    # Step 4: Impute categorical columns with mode
     object_cols = df.select_dtypes(include=['object']).columns
     for col in object_cols:
-        mode_val = df[col].mode()
-        fill_val = mode_val[0] if len(mode_val) > 0 else 'unknown'
-        df[col] = df[col].fillna(fill_val)
+        if df[col].isna().any():
+            mode_val = df[col].mode()
+            fill_val = mode_val[0] if len(mode_val) > 0 else 'MISSING'
+            df[col] = df[col].fillna(fill_val)
     
-    final_na = df.isna().sum().sum()
-    logger.info(f"Missing values: {initial_na} → {final_na}")
-    return df
+    if len(object_cols) > 0:
+        logger.debug(f"Imputed {len(object_cols)} categorical columns with mode")
+    
+    # Final statistics
+    stats['final_shape'] = df.shape
+    stats['final_missing'] = df.isna().sum().sum()
+    stats['final_missing_pct'] = 100 * df.isna().sum().sum() / df.size
+    
+    logger.info(
+        f"Missing value handling: "
+        f"{stats['initial_missing']} → {stats['final_missing']} "
+        f"({stats['initial_missing_pct']:.1f}% → {stats['final_missing_pct']:.1f}%)"
+    )
+    
+    return df, stats
 
 
 def decode_bytes_column(col_data: pd.Series) -> pd.Series:
@@ -173,8 +237,10 @@ def load_tabular_data(filepath: str) -> Tuple[np.ndarray, np.ndarray, list]:
         )
     
     logger.info(f"Loaded data shape: {df.shape}")
-    df = smart_fill_missing(df)
-    
+
+    # Handle missing values and track statistics
+    df, missing_stats = smart_fill_missing(df)
+
     target_col = find_target_column(df)
     
     if not np.issubdtype(df[target_col].dtype, np.number):
@@ -492,6 +558,18 @@ def main():
     logger.info("LOADING DATA")
     logger.info("=" * 60)
     X, y, unique_classes = load_tabular_data(args.input_file)
+
+    # Log dataset statistics for paper
+    logger.info("=" * 60)
+    logger.info("DATASET STATISTICS")
+    logger.info("=" * 60)
+    logger.info(f"Dataset: {os.path.basename(args.input_file)}")
+    logger.info(f"Total samples: {len(y)}")
+    logger.info(f"Total features: {X.shape[1]}")
+    logger.info(f"Number of classes: {len(unique_classes)}")
+    logger.info(f"Class distribution: {dict(zip(unique_classes, np.bincount(y)))}")
+    logger.info(f"Feature range: [{X.min():.3f}, {X.max():.3f}]")
+    logger.info("=" * 60)
     
     num_classes = len(unique_classes)
     n_cont_features = X.shape[1]
